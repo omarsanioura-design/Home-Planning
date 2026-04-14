@@ -1,1 +1,560 @@
+<!DOCTYPE html>
 
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>HomeBase · Household Budget</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0d0d1a" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+
+  <!-- ════════════════════════════════════════════
+       ⚙️  FIREBASE CONFIG — replace with yours!
+       1. Go to https://console.firebase.google.com
+       2. Create a project → Add Web App
+       3. Copy the firebaseConfig object values below
+       4. Enable Authentication → Email/Password
+       5. Enable Firestore Database (start in test mode)
+  ════════════════════════════════════════════ -->
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, updateProfile }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { getFirestore, doc, collection, addDoc, deleteDoc, onSnapshot, setDoc, getDoc, query, orderBy }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // ▼▼▼ PASTE YOUR FIREBASE CONFIG HERE ▼▼▼
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+    // ▲▲▲ END OF CONFIG ▲▲▲
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    // ── State ──────────────────────────────────
+    const CATEGORIES = [
+      { name:"Housing",      icon:"🏠", color:"#FF6B6B" },
+      { name:"Food",         icon:"🛒", color:"#FFB347" },
+      { name:"Transport",    icon:"🚗", color:"#4ECDC4" },
+      { name:"Utilities",    icon:"💡", color:"#45B7D1" },
+      { name:"Health",       icon:"💊", color:"#96CEB4" },
+      { name:"Entertainment",icon:"🎬", color:"#DDA0DD" },
+      { name:"Savings",      icon:"🏦", color:"#98D8C8" },
+      { name:"Other",        icon:"📦", color:"#B0B0B0" },
+    ];
+    const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    const SHORT  = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+    let currentUser = null;
+    let householdId = null;
+    let unsubTx = null, unsubSettings = null;
+
+    let state = {
+      tab: "dashboard",
+      month: new Date().getMonth(),
+      year:  new Date().getFullYear(),
+      transactions: [],
+      budgets: {},
+      income: 0,
+      members: [],
+      authMode: "login",   // login | register
+      loading: true,
+      toast: null,
+    };
+
+    // ── Helpers ───────────────────────────────
+    const fmt = n => "$" + Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const catColor = name => (CATEGORIES.find(c=>c.name===name)||{color:"#999"}).color;
+    const catIcon  = name => (CATEGORIES.find(c=>c.name===name)||{icon:"💰"}).icon;
+
+    function showToast(msg, type="success") {
+      state.toast = { msg, type };
+      render();
+      setTimeout(()=>{ state.toast=null; render(); }, 3000);
+    }
+
+    // ── Firestore helpers ─────────────────────
+    function txPath()       { return `households/${householdId}/transactions`; }
+    function settingsPath() { return `households/${householdId}/settings/main`; }
+
+    async function getOrCreateHousehold(uid, email) {
+      // User doc stores which household they belong to
+      const userRef = doc(db, "users", uid);
+      const snap = await getDoc(userRef);
+      if (snap.exists() && snap.data().householdId) {
+        return snap.data().householdId;
+      }
+      // Create new household
+      const hid = uid; // owner's UID is the household ID
+      await setDoc(doc(db, "households", hid, "settings", "main"), {
+        income: 0, budgets: {}, members: [email]
+      });
+      await setDoc(userRef, { householdId: hid, email });
+      return hid;
+    }
+
+    async function joinHousehold(code) {
+      // code = householdId of another user
+      const hSnap = await getDoc(doc(db, "households", code, "settings", "main"));
+      if (!hSnap.exists()) return false;
+      // Update our user doc
+      await setDoc(doc(db, "users", currentUser.uid), { householdId: code, email: currentUser.email }, {merge:true});
+      // Add email to members list
+      const members = hSnap.data().members || [];
+      if (!members.includes(currentUser.email)) {
+        await setDoc(doc(db, "households", code, "settings", "main"), { members: [...members, currentUser.email] }, {merge:true});
+      }
+      return true;
+    }
+
+    function subscribeToHousehold() {
+      if (unsubTx) unsubTx();
+      if (unsubSettings) unsubSettings();
+
+      const { month, year } = state;
+
+      // Transactions for selected month
+      const q = query(collection(db, txPath()), orderBy("createdAt","desc"));
+      unsubTx = onSnapshot(q, snap => {
+        state.transactions = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(t => t.month === month && t.year === year);
+        render();
+      });
+
+      unsubSettings = onSnapshot(doc(db, settingsPath()), snap => {
+        if (snap.exists()) {
+          const d = snap.data();
+          state.income  = d.income  || 0;
+          state.budgets = d.budgets || {};
+          state.members = d.members || [];
+          render();
+        }
+      });
+    }
+
+    async function addTransaction(desc, amount, category, type) {
+      if (!householdId) return;
+      await addDoc(collection(db, txPath()), {
+        description: desc, amount: parseFloat(amount),
+        category, type,
+        month: state.month, year: state.year,
+        addedBy: currentUser.email,
+        createdAt: Date.now()
+      });
+    }
+
+    async function deleteTransaction(id) {
+      await deleteDoc(doc(db, txPath(), id));
+    }
+
+    async function saveSettings(income, budgets) {
+      await setDoc(doc(db, settingsPath()), { income, budgets, members: state.members }, {merge:true});
+    }
+
+    // ── Auth ──────────────────────────────────
+    onAuthStateChanged(auth, async user => {
+      if (user) {
+        currentUser = user;
+        householdId = await getOrCreateHousehold(user.uid, user.email);
+        subscribeToHousehold();
+        state.loading = false;
+        state.tab = "dashboard";
+      } else {
+        currentUser = null;
+        householdId = null;
+        if (unsubTx) unsubTx();
+        if (unsubSettings) unsubSettings();
+        state.loading = false;
+        state.tab = "auth";
+        state.transactions = [];
+      }
+      render();
+    });
+
+    // ── Render ────────────────────────────────
+    function render() {
+      const root = document.getElementById("root");
+      if (!root) return;
+
+      if (state.loading) {
+        root.innerHTML = `
+          <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0d1a;flex-direction:column;gap:16px">
+            <div style="font-family:Syne,sans-serif;font-size:22px;color:#e94560;font-weight:800;letter-spacing:-1px">HomeBase</div>
+            <div style="width:32px;height:32px;border:3px solid #ffffff15;border-top-color:#e94560;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+          </div>`;
+        return;
+      }
+
+      if (state.tab === "auth") { renderAuth(root); return; }
+      if (state.tab === "household") { renderHousehold(root); return; }
+      renderApp(root);
+    }
+
+    // ── Auth Screen ───────────────────────────
+    function renderAuth(root) {
+      const isReg = state.authMode === "register";
+      root.innerHTML = `
+        <div style="min-height:100vh;background:#0d0d1a;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;box-sizing:border-box">
+          <div style="font-family:Syne,sans-serif;font-size:36px;color:#e94560;font-weight:800;letter-spacing:-2px;margin-bottom:4px">HomeBase</div>
+          <div style="color:#5a5a7a;font-size:13px;margin-bottom:40px;letter-spacing:1px">Household Budget · Shared</div>
+          <div style="width:100%;max-width:360px;background:#16213e;border-radius:20px;padding:28px;border:1px solid #ffffff08">
+            <div style="font-size:18px;font-weight:700;margin-bottom:24px">${isReg ? "Create Account" : "Welcome back"}</div>
+            <div style="display:flex;flex-direction:column;gap:12px">
+              ${isReg ? `<input id="auth-name" placeholder="Your name" style="${inputStyle()}" />` : ""}
+              <input id="auth-email" type="email" placeholder="Email address" style="${inputStyle()}" />
+              <input id="auth-pass"  type="password" placeholder="Password" style="${inputStyle()}" />
+              <button id="auth-submit" style="${btnStyle()}">${isReg ? "Create Account" : "Sign In"}</button>
+            </div>
+            <div style="text-align:center;margin-top:18px;color:#5a5a7a;font-size:13px">
+              ${isReg ? "Already have an account?" : "No account yet?"}
+              <span id="auth-toggle" style="color:#e94560;cursor:pointer;margin-left:6px;font-weight:600">${isReg ? "Sign In" : "Create one"}</span>
+            </div>
+          </div>
+        </div>`;
+
+      document.getElementById("auth-toggle").onclick = () => {
+        state.authMode = isReg ? "login" : "register";
+        render();
+      };
+      document.getElementById("auth-submit").onclick = async () => {
+        const email = document.getElementById("auth-email").value.trim();
+        const pass  = document.getElementById("auth-pass").value;
+        const btn   = document.getElementById("auth-submit");
+        btn.textContent = "…"; btn.disabled = true;
+        try {
+          if (isReg) {
+            const name = document.getElementById("auth-name").value.trim();
+            const cred = await createUserWithEmailAndPassword(auth, email, pass);
+            await updateProfile(cred.user, { displayName: name });
+          } else {
+            await signInWithEmailAndPassword(auth, email, pass);
+          }
+        } catch(e) {
+          showToast(e.message.replace("Firebase: ","").replace(/\(.*\)/,""), "error");
+          btn.textContent = isReg ? "Create Account" : "Sign In"; btn.disabled = false;
+        }
+      };
+    }
+
+    // ── Household join screen ─────────────────
+    function renderHousehold(root) {
+      root.innerHTML = `
+        <div style="min-height:100vh;background:#0d0d1a;padding:32px 24px;box-sizing:border-box;max-width:430px;margin:0 auto">
+          <button id="back-btn" style="background:#ffffff10;border:none;color:#e8e8f0;border-radius:8px;padding:8px 14px;cursor:pointer;margin-bottom:24px;font-family:inherit">← Back</button>
+          <div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;margin-bottom:6px">Household Settings</div>
+          <div style="color:#5a5a7a;font-size:13px;margin-bottom:28px">Share your code or enter someone else's to sync budgets</div>
+
+          <div style="${cardStyle()}">
+            <div style="font-size:11px;letter-spacing:2px;color:#8888aa;text-transform:uppercase;margin-bottom:10px">Your Household Code</div>
+            <div style="font-family:monospace;font-size:16px;background:#0d0d1a;border-radius:10px;padding:14px 16px;letter-spacing:2px;color:#4ECDC4;margin-bottom:10px;word-break:break-all">${householdId}</div>
+            <button id="copy-code" style="${btnStyle("#4ECDC4")}">Copy Code</button>
+          </div>
+
+          <div style="${cardStyle()}margin-top:12px">
+            <div style="font-size:11px;letter-spacing:2px;color:#8888aa;text-transform:uppercase;margin-bottom:10px">Join Another Household</div>
+            <div style="font-size:12px;color:#8888aa;margin-bottom:12px">Enter the code from your household member to share their budget data.</div>
+            <input id="join-code" placeholder="Paste household code here" style="${inputStyle()}margin-bottom:10px" />
+            <button id="join-btn" style="${btnStyle()}">Join Household</button>
+          </div>
+
+          <div style="${cardStyle()}margin-top:12px">
+            <div style="font-size:11px;letter-spacing:2px;color:#8888aa;text-transform:uppercase;margin-bottom:10px">Current Members</div>
+            ${state.members.map(m=>`<div style="padding:8px 0;border-bottom:1px solid #ffffff08;font-size:14px;color:#e8e8f0">👤 ${m}</div>`).join("")}
+          </div>
+
+          <button id="signout-btn" style="${btnStyle("#333344")}margin-top:20px">Sign Out</button>
+        </div>`;
+
+      document.getElementById("back-btn").onclick = () => { state.tab="dashboard"; render(); };
+      document.getElementById("copy-code").onclick = () => {
+        navigator.clipboard.writeText(householdId).then(()=>showToast("Code copied!")).catch(()=>showToast("Copy failed","error"));
+      };
+      document.getElementById("signout-btn").onclick = () => signOut(auth);
+      document.getElementById("join-btn").onclick = async () => {
+        const code = document.getElementById("join-code").value.trim();
+        if (!code) return;
+        const ok = await joinHousehold(code);
+        if (ok) {
+          householdId = code;
+          subscribeToHousehold();
+          showToast("Joined household!");
+          state.tab = "dashboard"; render();
+        } else {
+          showToast("Household not found","error");
+        }
+      };
+    }
+
+    // ── Main App ──────────────────────────────
+    function renderApp(root) {
+      const { tab, month, year, transactions, budgets, income } = state;
+      const expenses = transactions.filter(t=>t.type==="expense");
+      const totalExp = expenses.reduce((s,t)=>s+t.amount,0);
+      const totalInc = transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0) + income;
+      const balance  = totalInc - totalExp;
+
+      const spentByCat = name => expenses.filter(t=>t.category===name).reduce((s,t)=>s+t.amount,0);
+
+      root.innerHTML = `
+        <div id="app" style="font-family:'DM Sans',sans-serif;background:#0d0d1a;min-height:100vh;max-width:430px;margin:0 auto;color:#e8e8f0;padding-bottom:80px">
+
+          ${state.toast ? `<div style="position:fixed;top:16px;left:50%;transform:translateX(-50%);background:${state.toast.type==="error"?"#e94560":"#4ECDC4"};color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:999;white-space:nowrap;box-shadow:0 4px 20px #00000040">${state.toast.msg}</div>` : ""}
+
+          <!-- Header -->
+          <div style="background:linear-gradient(135deg,#16213e,#1a1a2e);padding:20px 20px 16px;border-bottom:1px solid #ffffff10">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+              <div style="display:flex;align-items:center;gap:10">
+                <button id="prev-month" style="background:#ffffff10;border:none;color:#e8e8f0;border-radius:8px;padding:6px 13px;cursor:pointer;font-size:16px">‹</button>
+                <span style="font-family:Syne,sans-serif;font-weight:700;font-size:15px;letter-spacing:-0.5px">${SHORT[month]} ${year}</span>
+                <button id="next-month" style="background:#ffffff10;border:none;color:#e8e8f0;border-radius:8px;padding:6px 13px;cursor:pointer;font-size:16px">›</button>
+              </div>
+              <button id="household-btn" title="Household settings" style="background:#ffffff10;border:none;color:#e8e8f0;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:18px">👥</button>
+            </div>
+            <div style="background:linear-gradient(135deg,#e94560,#c23152);border-radius:16px;padding:20px;box-shadow:0 8px 32px #e9456040">
+              <div style="font-size:10px;letter-spacing:2px;opacity:.8;text-transform:uppercase">Balance</div>
+              <div style="font-family:Syne,sans-serif;font-size:36px;font-weight:800;margin:4px 0 14px;letter-spacing:-2px">${fmt(balance)}</div>
+              <div style="display:flex;justify-content:space-between">
+                <div style="text-align:center"><div style="font-size:9px;opacity:.7;letter-spacing:1px;text-transform:uppercase">↑ Income</div><div style="font-size:14px;font-weight:600;color:#a8f0c0;margin-top:2px">${fmt(totalInc)}</div></div>
+                <div style="opacity:.2;font-size:20px">|</div>
+                <div style="text-align:center"><div style="font-size:9px;opacity:.7;letter-spacing:1px;text-transform:uppercase">↓ Expenses</div><div style="font-size:14px;font-weight:600;color:#ffaaaa;margin-top:2px">${fmt(totalExp)}</div></div>
+                <div style="opacity:.2;font-size:20px">|</div>
+                <div style="text-align:center"><div style="font-size:9px;opacity:.7;letter-spacing:1px;text-transform:uppercase">📋 Budget</div><div style="font-size:14px;font-weight:600;margin-top:2px">${fmt(Object.values(budgets).reduce((s,v)=>s+v,0))}</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab Content -->
+          ${tab==="dashboard"  ? renderDashboard(expenses, spentByCat, budgets) : ""}
+          ${tab==="add"        ? renderAdd() : ""}
+          ${tab==="transactions"? renderTransactions(transactions) : ""}
+          ${tab==="budget"     ? renderBudget(income, budgets) : ""}
+
+          <!-- Nav -->
+          <nav style="position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#16213e;border-top:1px solid #ffffff10;display:flex;z-index:100">
+            ${[["dashboard","📊","Overview"],["add","➕","Add"],["transactions","🧾","History"],["budget","🎯","Budgets"]]
+              .map(([id,ic,lb])=>`<button data-tab="${id}" style="flex:1;padding:12px 0 8px;border:none;background:transparent;color:${tab===id?"#e94560":"#5a5a7a"};cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:9px;letter-spacing:.5px;font-family:inherit;transition:color .2s"><span style="font-size:20px">${ic}</span>${lb}</button>`).join("")}
+          </nav>
+        </div>`;
+
+      // Nav
+      root.querySelectorAll("[data-tab]").forEach(btn => {
+        btn.onclick = () => { state.tab = btn.dataset.tab; render(); };
+      });
+      document.getElementById("prev-month").onclick = () => {
+        if (state.month===0){state.month=11;state.year--;} else state.month--;
+        subscribeToHousehold(); render();
+      };
+      document.getElementById("next-month").onclick = () => {
+        if (state.month===11){state.month=0;state.year++;} else state.month++;
+        subscribeToHousehold(); render();
+      };
+      document.getElementById("household-btn").onclick = () => { state.tab="household"; render(); };
+
+      // Add tx form
+      if (tab==="add") bindAddForm();
+      if (tab==="budget") bindBudgetForm(income, budgets);
+      if (tab==="transactions") bindDeleteButtons();
+    }
+
+    function renderDashboard(expenses, spentByCat, budgets) {
+      const rows = CATEGORIES.map(cat => {
+        const spent = spentByCat(cat.name);
+        const budget = budgets[cat.name]||0;
+        if (spent===0 && budget===0) return "";
+        const pct = budget>0 ? Math.min((spent/budget)*100,100) : 0;
+        const over = spent>budget && budget>0;
+        return `
+          <div style="${cardStyle()}">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:${budget>0?10:0}px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:38px;height:38px;border-radius:12px;background:${cat.color}22;display:flex;align-items:center;justify-content:center;font-size:18px">${cat.icon}</div>
+                <div><div style="font-size:14px;font-weight:600">${cat.name}</div>${budget>0?`<div style="font-size:11px;color:#8888aa;margin-top:1px">${Math.round(pct)}% of budget</div>`:""}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:14px;font-weight:600;color:${over?"#FF6B6B":"#e8e8f0"}">${fmt(spent)}</div>
+                ${budget>0?`<div style="font-size:11px;color:#8888aa">of ${fmt(budget)}</div>`:""}
+              </div>
+            </div>
+            ${budget>0?`<div style="background:#1a1a2e;border-radius:4px;height:6px;overflow:hidden"><div style="height:100%;border-radius:4px;width:${pct}%;background:${over?"#FF6B6B":cat.color};transition:width .5s"></div></div>`:""}
+          </div>`;
+      }).join("");
+      return `<div style="padding:16px 20px 0">${sectionTitle("Spending by Category")}${rows||emptyState("📊","No expenses yet this month","Add transactions to see your spending")}</div>`;
+    }
+
+    function renderAdd() {
+      return `<div style="padding:16px 20px 0">${sectionTitle("New Transaction")}
+        <div style="${cardStyle()}">
+          <div style="display:flex;gap:8px;margin-bottom:14px">
+            <button id="type-expense" style="flex:1;padding:9px;border-radius:10px;border:none;background:#e94560;color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Expense</button>
+            <button id="type-income"  style="flex:1;padding:9px;border-radius:10px;border:none;background:#1a1a2e;color:#8888aa;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Income</button>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <input id="tx-desc" placeholder="Description" style="${inputStyle()}" />
+            <input id="tx-amt"  placeholder="Amount (e.g. 42.50)" type="number" style="${inputStyle()}" />
+            <select id="tx-cat" style="${inputStyle()}appearance:none">
+              ${CATEGORIES.map(c=>`<option value="${c.name}">${c.icon} ${c.name}</option>`).join("")}
+            </select>
+            <button id="add-tx-btn" style="${btnStyle()}">Add Expense</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    function renderTransactions(transactions) {
+      if (!transactions.length) return `<div style="padding:16px 20px 0">${sectionTitle("All Transactions")}${emptyState("🧾","No transactions yet","")}</div>`;
+      return `<div style="padding:16px 20px 0">${sectionTitle("All Transactions")}
+        <div style="${cardStyle()}">
+          ${transactions.map((t,i)=>`
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:${i===transactions.length-1?"none":"1px solid #ffffff08"}">
+              <div style="width:40px;height:40px;border-radius:12px;background:${catColor(t.category)}22;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">${catIcon(t.category)}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.description}</div>
+                <div style="font-size:11px;color:#8888aa;margin-top:2px">${t.category} · ${t.addedBy||""}</div>
+              </div>
+              <div style="font-size:14px;font-weight:600;color:${t.type==="expense"?"#FF6B6B":"#4ECDC4"};flex-shrink:0">${t.type==="expense"?"-":"+"}${fmt(t.amount)}</div>
+              <button data-del="${t.id}" style="background:none;border:none;color:#ff4444;cursor:pointer;font-size:18px;padding:0 0 0 6px;flex-shrink:0">×</button>
+            </div>`).join("")}
+        </div>
+      </div>`;
+    }
+
+    function renderBudget(income, budgets) {
+      return `<div style="padding:16px 20px 0">${sectionTitle("Monthly Budgets")}
+        <div style="${cardStyle()}">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div><div style="font-weight:600;font-size:14px">💰 Base Monthly Income</div><div style="color:#8888aa;font-size:12px;margin-top:2px">${fmt(income)}</div></div>
+            <button id="edit-income-btn" style="background:#ffffff10;border:none;color:#e8e8f0;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-family:inherit">Edit</button>
+          </div>
+          <div id="income-form" style="display:none;margin-top:12px">
+            <div style="display:flex;gap:8px">
+              <input id="income-input" type="number" placeholder="Monthly income" value="${income||""}" style="${inputStyle()}flex:1" />
+              <button id="save-income-btn" style="${btnStyle()}width:auto;padding:11px 18px;margin-top:0">Save</button>
+            </div>
+          </div>
+        </div>
+        ${CATEGORIES.map(cat=>`
+          <div style="${cardStyle()}margin-top:10px" id="cat-card-${cat.name}">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:18px">${cat.icon}</span>
+                <div><div style="font-weight:600;font-size:14px">${cat.name}</div><div style="color:#8888aa;font-size:12px">${fmt(budgets[cat.name]||0)}</div></div>
+              </div>
+              <button data-cat="${cat.name}" class="edit-cat-btn" style="background:#ffffff10;border:none;color:#e8e8f0;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-family:inherit">Set</button>
+            </div>
+            <div id="cat-form-${cat.name}" style="display:none;margin-top:12px">
+              <div style="display:flex;gap:8px">
+                <input id="cat-input-${cat.name}" type="number" placeholder="Budget amount" value="${budgets[cat.name]||""}" style="${inputStyle()}flex:1" />
+                <button data-savecat="${cat.name}" style="${btnStyle(cat.color)}width:auto;padding:11px 18px;margin-top:0">Save</button>
+              </div>
+            </div>
+          </div>`).join("")}
+      </div>`;
+    }
+
+    function bindAddForm() {
+      let txType = "expense";
+      const updateTypeUI = () => {
+        document.getElementById("type-expense").style.background = txType==="expense"?"#e94560":"#1a1a2e";
+        document.getElementById("type-expense").style.color      = txType==="expense"?"#fff":"#8888aa";
+        document.getElementById("type-income").style.background  = txType==="income"?"#4ECDC4":"#1a1a2e";
+        document.getElementById("type-income").style.color       = txType==="income"?"#fff":"#8888aa";
+        document.getElementById("add-tx-btn").style.background   = txType==="expense"?"#e94560":"#4ECDC4";
+        document.getElementById("add-tx-btn").textContent        = `Add ${txType==="expense"?"Expense":"Income"}`;
+      };
+      document.getElementById("type-expense").onclick = () => { txType="expense"; updateTypeUI(); };
+      document.getElementById("type-income").onclick  = () => { txType="income";  updateTypeUI(); };
+      document.getElementById("add-tx-btn").onclick = async () => {
+        const desc = document.getElementById("tx-desc").value.trim();
+        const amt  = document.getElementById("tx-amt").value;
+        const cat  = document.getElementById("tx-cat").value;
+        if (!desc || !amt || isNaN(parseFloat(amt))) { showToast("Please fill all fields","error"); return; }
+        const btn = document.getElementById("add-tx-btn");
+        btn.textContent="Saving…"; btn.disabled=true;
+        await addTransaction(desc, amt, cat, txType);
+        showToast("Transaction added!");
+        document.getElementById("tx-desc").value="";
+        document.getElementById("tx-amt").value="";
+        btn.textContent=`Add ${txType==="expense"?"Expense":"Income"}`; btn.disabled=false;
+      };
+    }
+
+    function bindDeleteButtons() {
+      document.querySelectorAll("[data-del]").forEach(btn => {
+        btn.onclick = () => deleteTransaction(btn.dataset.del);
+      });
+    }
+
+    function bindBudgetForm(income, budgets) {
+      let incomeOpen = false;
+      document.getElementById("edit-income-btn").onclick = () => {
+        incomeOpen = !incomeOpen;
+        document.getElementById("income-form").style.display = incomeOpen?"block":"none";
+        document.getElementById("edit-income-btn").textContent = incomeOpen?"Cancel":"Edit";
+      };
+      document.getElementById("save-income-btn").onclick = async () => {
+        const val = parseFloat(document.getElementById("income-input").value)||0;
+        await saveSettings(val, state.budgets);
+        showToast("Income saved!");
+        incomeOpen=false;
+        document.getElementById("income-form").style.display="none";
+        document.getElementById("edit-income-btn").textContent="Edit";
+      };
+      document.querySelectorAll(".edit-cat-btn").forEach(btn => {
+        btn.onclick = () => {
+          const cat = btn.dataset.cat;
+          const form = document.getElementById(`cat-form-${cat}`);
+          const open = form.style.display==="none";
+          form.style.display = open?"block":"none";
+          btn.textContent = open?"Cancel":"Set";
+        };
+      });
+      document.querySelectorAll("[data-savecat]").forEach(btn => {
+        btn.onclick = async () => {
+          const cat = btn.dataset.savecat;
+          const val = parseFloat(document.getElementById(`cat-input-${cat}`).value)||0;
+          const newBudgets = {...state.budgets, [cat]: val};
+          await saveSettings(state.income, newBudgets);
+          showToast(`${cat} budget saved!`);
+          document.getElementById(`cat-form-${cat}`).style.display="none";
+          document.getElementById(`cat-card-${cat}`).querySelector(".edit-cat-btn").textContent="Set";
+        };
+      });
+    }
+
+    // ── Style helpers ─────────────────────────
+    function inputStyle() { return "width:100%;background:#0d0d1a;border:1px solid #ffffff15;border-radius:10px;padding:11px 14px;color:#e8e8f0;font-size:14px;box-sizing:border-box;font-family:'DM Sans',sans-serif;outline:none;"; }
+    function btnStyle(color="#e94560") { return `width:100%;padding:13px;border-radius:12px;border:none;background:${color};color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px;`; }
+    function cardStyle() { return "background:#16213e;border-radius:14px;padding:16px;margin-bottom:0;border:1px solid #ffffff08;"; }
+    function sectionTitle(t) { return `<div style="font-size:11px;letter-spacing:2px;color:#8888aa;text-transform:uppercase;margin-bottom:12px">${t}</div>`; }
+    function emptyState(icon,line1,line2) { return `<div style="${cardStyle()}text-align:center;color:#5a5a7a;padding:30px 16px"><div style="font-size:32px;margin-bottom:8px">${icon}</div><div>${line1}</div>${line2?`<div style="font-size:12px;margin-top:4px">${line2}</div>`:""}</div>`; }
+
+    // ── Boot ──────────────────────────────────
+    render();
+  </script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { background: #0d0d1a; overscroll-behavior: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    input::placeholder { color: #5a5a7a; }
+    input:focus { border-color: #e9456060 !important; }
+    select option { background: #16213e; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #ffffff20; border-radius: 2px; }
+  </style>
+
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>
