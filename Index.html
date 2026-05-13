@@ -24,7 +24,7 @@
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     // ▼▼▼ PASTE YOUR FIREBASE CONFIG HERE ▼▼▼
-    const firebaseConfig = {
+ const firebaseConfig = {
   apiKey: "AIzaSyAIp0oDFqSm1Z7WZ6hPnnGKplSr-fE0Q2w",
   authDomain: "home-planning-dcbe4.firebaseapp.com",
   projectId: "home-planning-dcbe4",
@@ -72,6 +72,7 @@
       month: new Date().getMonth(),
       year:  new Date().getFullYear(),
       transactions: [],
+      allTransactions: [],
       budgets: {},
       income: 0,
       members: [],
@@ -131,11 +132,15 @@
 
       const { month, year } = state;
 
-      // Transactions for selected month
+      // Fetch ALL transactions — filter by month/year in the render layer
+      // so the graphs tab always has access to the full year's data
       const q = query(collection(db, txPath()), orderBy("createdAt","desc"));
       unsubTx = onSnapshot(q, snap => {
-        state.transactions = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-          .filter(t => t.month === month && t.year === year);
+        const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        // Monthly view for Overview / History / Add tabs
+        state.transactions     = all.filter(t => t.month === month && t.year === year);
+        // Full dataset for Graphs tab — all years, all months
+        state.allTransactions  = all;
         render();
       });
 
@@ -474,7 +479,7 @@
           ${tab==="add"        ? renderAdd() : ""}
           ${tab==="transactions"? renderTransactions(transactions) : ""}
           ${tab==="budget"     ? renderBudget(income, budgets) : ""}
-          ${tab==="graphs"     ? renderGraphs(state.transactions, state.graphCat, state.graphType, state.year) : ""}
+          ${tab==="graphs"     ? renderGraphs(state.allTransactions || state.transactions, state.graphCat, state.graphType, state.year) : ""}
 
           <!-- Nav -->
           <nav style="position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#FFFFFF;border-top:1px solid #E8EAF0;display:flex;z-index:100;box-shadow:0 -2px 12px #0000000a">
