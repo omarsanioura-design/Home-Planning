@@ -67,6 +67,8 @@
       cardIdx: 0,
       graphCat: "Rent",
       graphType: "bar",
+      selectedCatMonth: null,
+      selectedBveMonth: null,
       month: new Date().getMonth(),
       year:  new Date().getFullYear(),
       transactions: [],
@@ -258,7 +260,7 @@
                     <div id="rule-len"  style="font-size:11px;color:#8891A5">○ At least 8 characters</div>
                     <div id="rule-upper" style="font-size:11px;color:#8891A5">○ At least 1 uppercase letter</div>
                     <div id="rule-num"  style="font-size:11px;color:#8891A5">○ At least 1 number</div>
-                  </div>` : ""}
+                  </div>` : `<div id="login-error" style="display:none;font-size:12px;color:#EF4444;margin-top:6px;font-weight:500">⚠ Incorrect email or password. Please try again.</div>`}
                 </div>
                 ${isReg ? `
                 <div>
@@ -307,6 +309,16 @@
         };
         if (!isReg) {
           document.getElementById("forgot-link").onclick = () => { state.authMode = "forgot"; render(); };
+          // Clear error on retype
+          ["auth-email","auth-pass"].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.oninput = () => {
+              const errDiv = document.getElementById("login-error");
+              if (errDiv) errDiv.style.display = "none";
+              const passInput = document.getElementById("auth-pass");
+              if (passInput) passInput.style.borderColor = "#DDE0EA";
+            };
+          });
         }
         if (isReg) {
           // Strength helpers
@@ -360,7 +372,14 @@
               await signInWithEmailAndPassword(auth, email, pass);
             }
           } catch(e) {
-            showToast(e.message.replace("Firebase: ","").replace(/\(.*\)/,""), "error");
+            if (!isReg) {
+              const errDiv = document.getElementById("login-error");
+              if (errDiv) errDiv.style.display = "block";
+              const passInput = document.getElementById("auth-pass");
+              if (passInput) passInput.style.borderColor = "#EF4444";
+            } else {
+              showToast(e.message.replace("Firebase: ","").replace(/\(.*\)/,""), "error");
+            }
             btn.textContent = isReg ? "Create Account" : "Sign In"; btn.disabled = false;
           }
         };
@@ -435,13 +454,18 @@
 
           <!-- Header -->
           <div style="background:#FFFFFF;padding:20px 20px 16px;border-bottom:1px solid #E8EAF0;box-shadow:0 1px 8px #0000000a">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-              <div style="display:flex;align-items:center;gap:10">
+            <div style="display:flex;align-items:center;margin-bottom:16px;gap:0">
+              <div style="display:flex;align-items:center;gap:10;flex:1;min-width:0">
+                ${tab==="graphs" ? `
+                  <button id="prev-year" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 13px;cursor:pointer;font-size:16px">‹</button>
+                  <span style="font-family:'DM Sans',sans-serif;font-weight:700;font-size:16px;color:#1A1D2E;flex:1;text-align:center">${year} YTD</span>
+                  <button id="next-year" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 13px;cursor:pointer;font-size:16px">›</button>
+                ` : `
                 <button id="prev-month" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 13px;cursor:pointer;font-size:16px">‹</button>
-                <span style="font-family:Syne,sans-serif;font-weight:800;font-size:15px;color:#1A1D2E">${SHORT[month]} ${year}</span>
-                <button id="next-month" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 13px;cursor:pointer;font-size:16px">›</button>
+                <span style="font-family:'DM Sans',sans-serif;font-weight:700;font-size:16px;color:#1A1D2E;flex:1;text-align:center">${SHORT[month]} ${year}</span>
+                <button id="next-month" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 13px;cursor:pointer;font-size:16px">›</button>`}
               </div>
-              <button id="household-btn" title="Household settings" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:18px">👥</button>
+              <div style="padding-left:20px;flex-shrink:0"><button id="household-btn" title="Household settings" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:18px">👥</button></div>
             </div>
           </div>
 
@@ -450,7 +474,7 @@
           ${tab==="add"        ? renderAdd() : ""}
           ${tab==="transactions"? renderTransactions(transactions) : ""}
           ${tab==="budget"     ? renderBudget(income, budgets) : ""}
-          ${tab==="graphs"     ? renderGraphs(state.transactions, state.graphCat, state.graphType) : ""}
+          ${tab==="graphs"     ? renderGraphs(state.transactions, state.graphCat, state.graphType, state.year) : ""}
 
           <!-- Nav -->
           <nav style="position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#FFFFFF;border-top:1px solid #E8EAF0;display:flex;z-index:100;box-shadow:0 -2px 12px #0000000a">
@@ -463,14 +487,20 @@
       root.querySelectorAll("[data-tab]").forEach(btn => {
         btn.onclick = () => { state.tab = btn.dataset.tab; render(); };
       });
-      document.getElementById("prev-month").onclick = () => {
-        if (state.month===0){state.month=11;state.year--;} else state.month--;
-        subscribeToHousehold(); render();
-      };
-      document.getElementById("next-month").onclick = () => {
-        if (state.month===11){state.month=0;state.year++;} else state.month++;
-        subscribeToHousehold(); render();
-      };
+      if (document.getElementById("prev-month")) {
+        document.getElementById("prev-month").onclick = () => {
+          if (state.month===0){state.month=11;state.year--;} else state.month--;
+          subscribeToHousehold(); render();
+        };
+        document.getElementById("next-month").onclick = () => {
+          if (state.month===11){state.month=0;state.year++;} else state.month++;
+          subscribeToHousehold(); render();
+        };
+      }
+      if (document.getElementById("prev-year")) {
+        document.getElementById("prev-year").onclick = () => { state.year--; render(); };
+        document.getElementById("next-year").onclick = () => { state.year++; render(); };
+      }
       document.getElementById("household-btn").onclick = () => { state.tab="household"; render(); };
 
 
@@ -523,9 +553,9 @@
                 <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#94A3B8;margin-bottom:4px">Balance</div>
                 <div style="font-family:Syne,sans-serif;font-size:32px;font-weight:800;margin:4px 0 14px;letter-spacing:-2px;color:${balance>=0?"#10B981":"#EF4444"}">${fmt(balance)}</div>
                 <div style="display:flex;align-items:stretch">
-                  <div style="flex:0 0 50%"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8">↑ Income</div><div style="font-size:14px;font-weight:600;color:#10B981;margin-top:2px">${fmt(totalInc)}</div></div>
-                  <div style="width:1px;background:#E8EAF0;flex-shrink:0"></div>
-                  <div style="flex:0 0 50%;padding-left:16px;text-align:right"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8">↓ Expenses</div><div style="font-size:14px;font-weight:600;color:#EF4444;margin-top:2px">${fmt(totalExp)}</div></div>
+                  <div style="flex:1 1 0;min-width:0"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">↑ Income</div><div style="font-size:14px;font-weight:600;color:#10B981;margin-top:2px;white-space:nowrap">${fmt(totalInc)}</div></div>
+                  <div style="width:1px;background:#E8EAF0;flex-shrink:0;margin:0 14px"></div>
+                  <div style="flex:1 1 0;min-width:0;text-align:right"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">↓ Expenses</div><div style="font-size:14px;font-weight:600;color:#EF4444;margin-top:2px;white-space:nowrap">${fmt(totalExp)}</div></div>
                 </div>
               </div>
               <!-- Card 1: Budget vs Actuals -->
@@ -533,9 +563,9 @@
                 <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#94A3B8;margin-bottom:4px">Budget vs Actuals</div>
                 <div style="font-family:Syne,sans-serif;font-size:32px;font-weight:800;margin:4px 0 14px;letter-spacing:-2px;color:${budgetVsAct>=0?"#10B981":"#EF4444"}">${budgetVsAct>=0?"+":""}${fmt(budgetVsAct)}</div>
                 <div style="display:flex;align-items:stretch">
-                  <div style="flex:0 0 50%"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8">📋 Budget</div><div style="font-size:14px;font-weight:600;color:#E2E8F0;margin-top:2px">${fmt(totalBudget)}</div></div>
-                  <div style="width:1px;background:#E8EAF0;flex-shrink:0"></div>
-                  <div style="flex:0 0 50%;padding-left:16px;text-align:right"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8">↓ Expenses</div><div style="font-size:14px;font-weight:600;color:#EF4444;margin-top:2px">${fmt(totalExp)}</div></div>
+                  <div style="flex:1 1 0;min-width:0"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">📋 Budget</div><div style="font-size:14px;font-weight:600;color:#E2E8F0;margin-top:2px;white-space:nowrap">${fmt(totalBudget)}</div></div>
+                  <div style="width:1px;background:#E8EAF0;flex-shrink:0;margin:0 14px"></div>
+                  <div style="flex:1 1 0;min-width:0;text-align:right"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">↓ Expenses</div><div style="font-size:14px;font-weight:600;color:#EF4444;margin-top:2px;white-space:nowrap">${fmt(totalExp)}</div></div>
                 </div>
               </div>
             </div>
@@ -712,9 +742,9 @@
     }
 
     // ── Graphs ───────────────────────────────
-    function renderGraphs(allTransactions, selectedCat, graphType) {
+    function renderGraphs(allTransactions, selectedCat, graphType, graphYear) {
       const SHORT_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      const currentYear = state.year;
+      const currentYear = graphYear || state.year;
       // Build monthly totals for selected category YTD
       const monthlyData = SHORT_MONTHS.map((m, i) => {
         const total = allTransactions
@@ -722,7 +752,32 @@
           .reduce((s,t)=>s+t.amount, 0);
         return { month: m, total };
       });
-      const ytdMonths = monthlyData.filter((_,i) => i <= new Date().getMonth());
+      const currentRealMonth = new Date().getMonth();
+      const currentRealYear  = new Date().getFullYear();
+
+      // Find first and last months that have data
+      const allMonthTotals = monthlyData.map(d => d.total);
+      let firstDataMonth = allMonthTotals.findIndex(t => t > 0);
+      let lastDataMonth  = allMonthTotals.map((t,i) => t > 0 ? i : -1).filter(i => i >= 0).pop();
+
+      // If no data at all, show only months up to current real month (for current year)
+      // or all 12 months (for past years)
+      if (firstDataMonth === -1) {
+        if (currentYear === currentRealYear) {
+          firstDataMonth = 0;
+          lastDataMonth  = currentRealMonth;
+        } else {
+          firstDataMonth = 0;
+          lastDataMonth  = 11;
+        }
+      } else {
+        // For the current year, never show beyond the current real month
+        if (currentYear === currentRealYear) {
+          lastDataMonth = Math.min(lastDataMonth, currentRealMonth);
+        }
+      }
+
+      const ytdMonths = monthlyData.filter((_,i) => i >= firstDataMonth && i <= lastDataMonth);
       const maxVal = Math.max(...ytdMonths.map(d=>d.total), 1);
       const chartH = 160;
       const chartW = 320;
@@ -740,18 +795,57 @@
       });
 
       let chartContent = "";
+      const selCat = state.selectedCatMonth;
+      const tooltipSVG = (cx, cy, label, value, color, maxX) => {
+        const TW=90, TH=36;
+        const tx = Math.min(Math.max(cx-TW/2, padL), maxX-TW);
+        const ty = cy - TH - 10 < padT ? cy+14 : cy-TH-10;
+        return `<line x1="${cx}" y1="${padT}" x2="${cx}" y2="${padT+innerH}" stroke="${color}" stroke-width="1" stroke-dasharray="3,2" opacity="0.4"/>
+          <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="${TH}" rx="6" fill="#1E2A3A" opacity="0.95"/>
+          <text x="${(tx+TW/2).toFixed(1)}" y="${(ty+13).toFixed(1)}" text-anchor="middle" fill="#94A3B8" font-size="8" font-family="DM Sans,sans-serif" font-weight="600">${label}</text>
+          <text x="${(tx+TW/2).toFixed(1)}" y="${(ty+27).toFixed(1)}" text-anchor="middle" fill="${color}" font-size="12" font-family="DM Sans,sans-serif" font-weight="700">${value}</text>`;
+      };
       if (graphType === "bar") {
         const barW = Math.max(6, (innerW / n) * 0.55);
         const gap   = innerW / n;
-        chartContent = ytdMonths.map((d,i)=>{
+        const barGap = innerW / n;
+        const hitBarW = barGap;
+        const barItems = ytdMonths.map((d,i)=>{
           const barH = d.total > 0 ? (d.total/maxVal)*innerH : 2;
-          const x = padL + gap*i + gap/2 - barW/2;
+          const x = padL + barGap*i + barGap/2 - barW/2;
           const y = padT + innerH - barH;
-          return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}"
-            rx="3" fill="${cat.color}" opacity="0.9"/>
-            <text x="${(x+barW/2).toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle"
-              fill="#8891A5" font-size="9" font-family="DM Sans,sans-serif">${d.month}</text>`;
-        }).join("");
+          const cx = x + barW/2;
+          const selected = selCat === i;
+          return `<g onclick="window.setCatMonth(${i})" style="cursor:pointer">
+            <rect x="${(padL+barGap*i).toFixed(1)}" y="${padT}" width="${hitBarW.toFixed(1)}" height="${innerH+28}" fill="transparent"/>
+            <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}"
+              rx="3" fill="${cat.color}" opacity="${selected?1:0.75}" ${selected?`stroke="${cat.color}" stroke-width="2"`:""} />
+            <text x="${cx.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle"
+              fill="${selected?cat.color:"#8891A5"}" font-size="9" font-weight="${selected?"700":"400"}" font-family="DM Sans,sans-serif">${d.month}</text>
+          </g>`;
+        });
+        // Render tooltip last so it always appears on top of all bars
+        let selBarTooltip = "";
+        if (selCat !== null && ytdMonths[selCat]) {
+          const d = ytdMonths[selCat];
+          const barH = d.total > 0 ? (d.total/maxVal)*innerH : 2;
+          const x = padL + barGap*selCat + barGap/2 - barW/2;
+          const y = padT + innerH - barH;
+          const cx = x + barW/2;
+          const label=`${d.month} · ${selectedCat}`, value=fmt(d.total);
+          const TW=Math.max(Math.max(label.length, value.length)*7+24, 100);
+          const TH=38;
+          const tx = Math.min(Math.max(cx-TW/2, padL), chartW-padR-TW);
+          const ty = Math.max(y - TH - 8, padT);
+          selBarTooltip = `
+            <line x1="${cx.toFixed(1)}" y1="${padT}" x2="${cx.toFixed(1)}" y2="${(padT+innerH).toFixed(1)}" stroke="${cat.color}" stroke-width="1" stroke-dasharray="3,2" opacity="0.35"/>
+            <rect x="${(tx-1).toFixed(1)}" y="${(ty-1).toFixed(1)}" width="${TW+2}" height="${TH+2}" rx="7" fill="#1E2A3A"/>
+            <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="${TH}" rx="6" fill="#1E2A3A"/>
+            <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="${TH}" rx="6" fill="none" stroke="#3a4a5e" stroke-width="1"/>
+            <text x="${(tx+TW/2).toFixed(1)}" y="${(ty+13).toFixed(1)}" text-anchor="middle" fill="#94A3B8" font-size="8" font-family="DM Sans,sans-serif" font-weight="600">${label}</text>
+            <text x="${(tx+TW/2).toFixed(1)}" y="${(ty+28).toFixed(1)}" text-anchor="middle" fill="${cat.color}" font-size="13" font-family="DM Sans,sans-serif" font-weight="700">${value}</text>`;
+        }
+        chartContent = barItems.join("") + selBarTooltip;
       } else {
         const pts = ytdMonths.map((d,i)=>{
           const gap = innerW/Math.max(n-1,1);
@@ -770,9 +864,30 @@
           </linearGradient></defs>
           <path d="${areaPath}" fill="url(#areaGrad)"/>
           <path d="${linePath}" fill="none" stroke="${cat.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-          ${pts.map(p=>`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" fill="${cat.color}"/>`).join("")}
-          ${pts.map((p,i)=>`<text x="${p.x.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle"
-            fill="#8891A5" font-size="9" font-family="DM Sans,sans-serif">${p.d.month}</text>`).join("")}`;
+          ${pts.map((p,i)=>{
+            const selected = selCat === i;
+            const hitW = Math.max(innerW/Math.max(n-1,1), 28);
+            const lbl=`${p.d.month} · ${selectedCat}`, val=fmt(p.d.total);
+            const TW=Math.max(Math.max(lbl.length, val.length)*7+24, 100);
+            const TH=38;
+            const tx = Math.min(Math.max(p.x-TW/2, padL), chartW-padR-TW);
+            const belowY = p.y + 12;
+            const ty = belowY + TH > padT+innerH ? p.y - TH - 8 : belowY;
+            const tooltip = selected ? `
+              <line x1="${p.x.toFixed(1)}" y1="${padT}" x2="${p.x.toFixed(1)}" y2="${(padT+innerH).toFixed(1)}" stroke="${cat.color}" stroke-width="1" stroke-dasharray="3,2" opacity="0.35"/>
+              <rect x="${(tx-1).toFixed(1)}" y="${(ty-1).toFixed(1)}" width="${TW+2}" height="${TH+2}" rx="7" fill="#1E2A3A"/>
+              <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="${TH}" rx="6" fill="#1E2A3A"/>
+              <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="${TH}" rx="6" fill="none" stroke="#3a4a5e" stroke-width="1"/>
+              <text x="${(tx+TW/2).toFixed(1)}" y="${(ty+13).toFixed(1)}" text-anchor="middle" fill="#94A3B8" font-size="8" font-family="DM Sans,sans-serif" font-weight="600">${lbl}</text>
+              <text x="${(tx+TW/2).toFixed(1)}" y="${(ty+28).toFixed(1)}" text-anchor="middle" fill="${cat.color}" font-size="13" font-family="DM Sans,sans-serif" font-weight="700">${val}</text>` : "";
+            return `<g onclick="window.setCatMonth(${i})" style="cursor:pointer">
+              <rect x="${(p.x-hitW/2).toFixed(1)}" y="${padT}" width="${hitW.toFixed(1)}" height="${innerH+28}" fill="transparent"/>
+              <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${selected?5.5:3.5}" fill="${cat.color}" ${selected?'stroke="#fff" stroke-width="2"':""} />
+              <text x="${p.x.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle"
+                fill="${selected?cat.color:"#8891A5"}" font-size="9" font-weight="${selected?"700":"400"}" font-family="DM Sans,sans-serif">${p.d.month}</text>
+              ${tooltip}
+            </g>`;
+          }).join("")}`;
       }
 
       // Y grid lines + labels
@@ -789,12 +904,26 @@
 
       // Budget vs Expenses dual-line data
       const monthlyBudgetTotal = Object.values(state.budgets).reduce((s,v)=>s+v,0);
-      const bveData = SHORT.slice(0, new Date().getMonth()+1).map((m,i) => {
+      // Build full year BvE data
+      const bveAllData = SHORT.map((m,i) => {
         const monthExp = state.transactions
           .filter(t => t.type==="expense" && t.year===currentYear && t.month===i)
           .reduce((s,t)=>s+t.amount, 0);
         return { month:m, expenses:monthExp, budget:monthlyBudgetTotal };
       });
+
+      // Trim to first → last month with any expense data
+      const bveCurrentRealMonth = new Date().getMonth();
+      const bveCurrentRealYear  = new Date().getFullYear();
+      let bveFirst = bveAllData.findIndex(d => d.expenses > 0);
+      let bveLast  = bveAllData.map((d,i) => d.expenses > 0 ? i : -1).filter(i => i >= 0).pop();
+      if (bveFirst === -1) {
+        bveFirst = 0;
+        bveLast  = currentYear === bveCurrentRealYear ? bveCurrentRealMonth : 11;
+      } else if (currentYear === bveCurrentRealYear) {
+        bveLast = Math.min(bveLast, bveCurrentRealMonth);
+      }
+      const bveData = bveAllData.filter((_,i) => i >= bveFirst && i <= bveLast);
       const bveN   = bveData.length;
       const bveMax = Math.max(...bveData.map(d=>Math.max(d.expenses,d.budget)), 1);
       const avgMonthlyExp = bveN>0 ? Math.round(bveData.reduce((s,d)=>s+d.expenses,0)/bveN) : 0;
@@ -818,8 +947,36 @@
         const x=padL+(bveN===1?innerW/2:bveGap*i);
         return `<text x="${x.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle" fill="#8891A5" font-size="9" font-family="DM Sans,sans-serif">${d.month}</text>`;
       }).join("");
-      const bveBudgetDots  = budgetPts.map(p=>`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="#3B82F6"/>`).join("");
-      const bveExpenseDots = expensePts.map(p=>`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" fill="#FF6B6B"/>`).join("");
+      const selBve = state.selectedBveMonth;
+      const bveHitW = Math.max(innerW/Math.max(bveN-1,1), 28);
+      const bveClickDots = bveData.map((d,i)=>{
+        const bp=budgetPts[i], ep=expensePts[i], selected=selBve===i;
+        const budgetStr=fmt(d.budget), expStr=fmt(d.expenses);
+        const colW=Math.max(budgetStr.length, expStr.length, 8)*8+24;
+        const TW=Math.max(colW*2, 150);
+        const cx=ep.x;
+        const tx=Math.min(Math.max(cx-TW/2,padL),chartW-padR-TW);
+        const lowerY=Math.max(bp.y,ep.y);
+        const ty = lowerY+12+68 > padT+innerH ? lowerY-76 : lowerY+12;
+        const tooltip = selected ? `
+          <line x1="${cx.toFixed(1)}" y1="${padT}" x2="${cx.toFixed(1)}" y2="${(padT+innerH).toFixed(1)}" stroke="#8891A5" stroke-width="1" stroke-dasharray="3,2" opacity="0.3"/>
+          <rect x="${(tx-1).toFixed(1)}" y="${(ty-1).toFixed(1)}" width="${TW+2}" height="68" rx="9" fill="#1E2A3A"/>
+          <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="66" rx="8" fill="#1E2A3A"/>
+          <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="66" rx="8" fill="none" stroke="#3a4a5e" stroke-width="1"/>
+          <text x="${(tx+TW/2).toFixed(1)}" y="${(ty+14).toFixed(1)}" text-anchor="middle" fill="#94A3B8" font-size="9" font-family="DM Sans,sans-serif" font-weight="600">${d.month}</text>
+          <line x1="${(tx+8).toFixed(1)}" y1="${(ty+20).toFixed(1)}" x2="${(tx+TW-8).toFixed(1)}" y2="${(ty+20).toFixed(1)}" stroke="#3a4a5e" stroke-width="0.75"/>
+          <text x="${(tx+TW/4).toFixed(1)}" y="${(ty+35).toFixed(1)}" text-anchor="middle" fill="#94A3B8" font-size="8" font-family="DM Sans,sans-serif">Budget</text>
+          <text x="${(tx+TW/4).toFixed(1)}" y="${(ty+52).toFixed(1)}" text-anchor="middle" fill="#3B82F6" font-size="13" font-family="DM Sans,sans-serif" font-weight="700">${fmt(d.budget)}</text>
+          <line x1="${(tx+TW/2).toFixed(1)}" y1="${(ty+22).toFixed(1)}" x2="${(tx+TW/2).toFixed(1)}" y2="${(ty+58).toFixed(1)}" stroke="#3a4a5e" stroke-width="0.75"/>
+          <text x="${(tx+TW*3/4).toFixed(1)}" y="${(ty+35).toFixed(1)}" text-anchor="middle" fill="#94A3B8" font-size="8" font-family="DM Sans,sans-serif">Expenses</text>
+          <text x="${(tx+TW*3/4).toFixed(1)}" y="${(ty+52).toFixed(1)}" text-anchor="middle" fill="#EF4444" font-size="13" font-family="DM Sans,sans-serif" font-weight="700">${fmt(d.expenses)}</text>` : "";
+        return `<g onclick="window.setBveMonth(${i})" style="cursor:pointer">
+          <rect x="${(cx-bveHitW/2).toFixed(1)}" y="${padT}" width="${bveHitW.toFixed(1)}" height="${innerH+28}" fill="transparent"/>
+          <circle cx="${bp.x.toFixed(1)}" cy="${bp.y.toFixed(1)}" r="${selected?4.5:3}" fill="#3B82F6" ${selected?'stroke="#fff" stroke-width="1.5"':""} />
+          <circle cx="${ep.x.toFixed(1)}" cy="${ep.y.toFixed(1)}" r="${selected?5.5:3.5}" fill="#EF4444" ${selected?'stroke="#fff" stroke-width="1.5"':""} />
+          ${tooltip}
+        </g>`;
+      }).join("");
 
       return `<div style="padding:16px 20px 0">
         ${sectionTitle("Spending Graphs &middot; " + currentYear)}
@@ -844,15 +1001,15 @@
           </svg>
         </div>
         <!-- YTD summary -->
-        <div style="${cardStyle()}margin-top:10px;display:flex;justify-content:space-between">
-          <div>
-            <div style="font-size:9px;opacity:.6;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px">YTD Total</div>
-            <div style="font-size:18px;font-weight:700;color:${cat.color}">${fmt(ytdTotal)}</div>
+        <div style="${cardStyle()}margin-top:10px;display:flex;align-items:stretch">
+          <div style="flex:1 1 0;min-width:0">
+            <div style="font-size:9px;opacity:.6;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;white-space:nowrap">YTD Total</div>
+            <div style="font-size:18px;font-weight:700;color:${cat.color};white-space:nowrap">${fmt(ytdTotal)}</div>
           </div>
-          <div style="width:1px;background:#ffffff10"></div>
-          <div style="text-align:right">
-            <div style="font-size:9px;opacity:.6;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px">Monthly Avg</div>
-            <div style="font-size:18px;font-weight:700">${fmt(avg)}</div>
+          <div style="width:1px;background:#E8EAF0;flex-shrink:0;margin:0 16px"></div>
+          <div style="flex:1 1 0;min-width:0;text-align:right">
+            <div style="font-size:9px;opacity:.6;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;white-space:nowrap">Monthly Avg</div>
+            <div style="font-size:18px;font-weight:700;white-space:nowrap">${fmt(avg)}</div>
           </div>
         </div>
 
@@ -874,21 +1031,20 @@
             ${bveGridLines}
             ${bveMonthLabels}
             <path d="${budgetPath}" fill="none" stroke="#3B82F6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5,3"/>
-            ${bveBudgetDots}
-            <path d="${expensePath}" fill="none" stroke="#FF6B6B" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-            ${bveExpenseDots}
+            <path d="${expensePath}" fill="none" stroke="#EF4444" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+            ${bveClickDots}
           </svg>
         </div>
         <!-- Budget vs Expenses summary -->
-        <div style="${cardStyle()}margin-top:10px;display:flex;justify-content:space-between">
-          <div>
-            <div style="font-size:9px;opacity:.6;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;color:#3B82F6">Avg Budget</div>
-            <div style="font-size:18px;font-weight:700;color:#3B82F6">${fmt(monthlyBudgetTotal)}</div>
+        <div style="${cardStyle()}margin-top:10px;display:flex;align-items:stretch">
+          <div style="flex:1 1 0;min-width:0">
+            <div style="font-size:9px;opacity:.6;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;color:#3B82F6;white-space:nowrap">Avg Budget</div>
+            <div style="font-size:18px;font-weight:700;color:#3B82F6;white-space:nowrap">${fmt(monthlyBudgetTotal)}</div>
           </div>
-          <div style="width:1px;background:#ffffff10"></div>
-          <div style="text-align:right">
-            <div style="font-size:9px;opacity:.6;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;color:#FF6B6B">Avg Expenses</div>
-            <div style="font-size:18px;font-weight:700;color:#FF6B6B">${fmt(avgMonthlyExp)}</div>
+          <div style="width:1px;background:#E8EAF0;flex-shrink:0;margin:0 16px"></div>
+          <div style="flex:1 1 0;min-width:0;text-align:right">
+            <div style="font-size:9px;opacity:.6;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;color:#EF4444;white-space:nowrap">Avg Expenses</div>
+            <div style="font-size:18px;font-weight:700;color:#EF4444;white-space:nowrap">${fmt(avgMonthlyExp)}</div>
           </div>
         </div>
       </div>`;
@@ -896,11 +1052,13 @@
 
     function bindGraphs() {
       const catSel = document.getElementById("graph-cat-select");
-      if (catSel) catSel.onchange = () => { state.graphCat = catSel.value; render(); };
+      if (catSel) catSel.onchange = () => { state.graphCat=catSel.value; state.selectedCatMonth=null; render(); };
       const barBtn  = document.getElementById("graph-bar-btn");
       const lineBtn = document.getElementById("graph-line-btn");
-      if (barBtn)  barBtn.onclick  = () => { state.graphType="bar";  render(); };
-      if (lineBtn) lineBtn.onclick = () => { state.graphType="line"; render(); };
+      if (barBtn)  barBtn.onclick  = () => { state.graphType="bar";  state.selectedCatMonth=null; render(); };
+      if (lineBtn) lineBtn.onclick = () => { state.graphType="line"; state.selectedCatMonth=null; render(); };
+      window.setCatMonth = (i) => { state.selectedCatMonth = state.selectedCatMonth===i ? null : i; render(); };
+      window.setBveMonth = (i) => { state.selectedBveMonth = state.selectedBveMonth===i ? null : i; render(); };
     }
 
     // ── Style helpers ─────────────────────────
