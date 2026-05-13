@@ -24,7 +24,7 @@
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     // ▼▼▼ PASTE YOUR FIREBASE CONFIG HERE ▼▼▼
- const firebaseConfig = {
+   const firebaseConfig = {
   apiKey: "AIzaSyAIp0oDFqSm1Z7WZ6hPnnGKplSr-fE0Q2w",
   authDomain: "home-planning-dcbe4.firebaseapp.com",
   projectId: "home-planning-dcbe4",
@@ -909,9 +909,9 @@
 
       // Budget vs Expenses dual-line data
       const monthlyBudgetTotal = Object.values(state.budgets).reduce((s,v)=>s+v,0);
-      // Build full year BvE data
+      // Build full year BvE data — use allTransactions so all months are included
       const bveAllData = SHORT.map((m,i) => {
-        const monthExp = state.transactions
+        const monthExp = allTransactions
           .filter(t => t.type==="expense" && t.year===currentYear && t.month===i)
           .reduce((s,t)=>s+t.amount, 0);
         return { month:m, expenses:monthExp, budget:monthlyBudgetTotal };
