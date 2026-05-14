@@ -24,7 +24,7 @@
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     // ▼▼▼ PASTE YOUR FIREBASE CONFIG HERE ▼▼▼
-    const firebaseConfig = {
+   const firebaseConfig = {
   apiKey: "AIzaSyAIp0oDFqSm1Z7WZ6hPnnGKplSr-fE0Q2w",
   authDomain: "home-planning-dcbe4.firebaseapp.com",
   projectId: "home-planning-dcbe4",
@@ -377,7 +377,7 @@
             if (rules) rules.style.display = p.length > 0 ? "flex" : "none";
             const setRule = (id, ok) => {
               const el = document.getElementById(id);
-              if (el) { el.textContent = (ok ? "✅" : "○") + el.textContent.slice(1); el.style.color = ok ? "#10B981" : "#8891A5"; }
+              if (el) { el.textContent = (ok ? "✅" : "○") + el.textContent.slice(1); el.style.color = ok ? "#10B981" : '#8891A5'; }
             };
             setRule("rule-len",   p.length >= 8);
             setRule("rule-upper", /[A-Z]/.test(p));
@@ -529,7 +529,7 @@
           <!-- Nav -->
           <nav style="position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#FFFFFF;border-top:1px solid #E8EAF0;display:flex;z-index:100;box-shadow:0 -2px 12px #0000000a">
             ${[["dashboard","📊","Overview"],["add","➕","Add"],["transactions","🧾","History"],["budget","🎯","Budgets"],["graphs","📈","Graphs"]]
-              .map(([id,ic,lb])=>`<button data-tab="${id}" style="flex:1;padding:12px 0 8px;border:none;background:transparent;color:${tab===id?"#5B6EF5":"#8891A5"};cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:9px;letter-spacing:.5px;font-family:inherit;transition:color .2s"><span style="font-size:20px">${ic}</span>${lb}</button>`).join("")}
+              .map(([id,ic,lb])=>`<button data-tab="${id}" style="flex:1;padding:12px 0 8px;border:none;background:transparent;color:${tab===id?"#5B6EF5":'#8891A5'};cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:9px;letter-spacing:.5px;font-family:inherit;transition:color .2s"><span style="font-size:20px">${ic}</span>${lb}</button>`).join("")}
           </nav>
         </div>`;
 
@@ -601,7 +601,7 @@
               <!-- Card 0: Balance -->
               <div style="min-width:100%;background:#1E2A3A;border-radius:16px;padding:18px 20px;box-shadow:0 2px 8px #0000000f;border:1px solid #1E2A3A;box-sizing:border-box">
                 <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#94A3B8;margin-bottom:6px">Balance</div>
-                <div style="font-family:DM Sans,sans-serif;font-size:28px;font-weight:700;margin:4px 0 14px;letter-spacing:-0.5px;color:${balance>=0?"#10B981":"#EF4444"}">${fmt(balance)}</div>
+                <div style="font-family:'DM Sans',sans-serif;font-size:28px;font-weight:700;margin:4px 0 14px;letter-spacing:-0.5px;color:${balance>=0?"#10B981":"#EF4444"}">${fmt(balance)}</div>
                 <div style="display:flex;align-items:stretch">
                   <div style="flex:1 1 0;min-width:0"><div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">↑ Income</div><div style="font-size:15px;font-weight:600;color:#10B981;margin-top:3px;white-space:nowrap">${fmt(totalInc)}</div></div>
                   <div style="width:1px;background:#E8EAF0;flex-shrink:0;margin:0 14px"></div>
@@ -611,7 +611,7 @@
               <!-- Card 1: Budget vs Actuals -->
               <div style="min-width:100%;background:#1E2A3A;border-radius:16px;padding:18px 20px;box-shadow:0 2px 8px #0000000f;border:1px solid #1E2A3A;box-sizing:border-box">
                 <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#94A3B8;margin-bottom:6px">Budget vs Actuals</div>
-                <div style="font-family:DM Sans,sans-serif;font-size:28px;font-weight:700;margin:4px 0 14px;letter-spacing:-0.5px;color:${budgetVsAct>=0?"#10B981":"#EF4444"}">${budgetVsAct>=0?"+":""}${fmt(budgetVsAct)}</div>
+                <div style="font-family:'DM Sans',sans-serif;font-size:28px;font-weight:700;margin:4px 0 14px;letter-spacing:-0.5px;color:${budgetVsAct>=0?"#10B981":"#EF4444"}">${budgetVsAct>=0?"+":""}${fmt(budgetVsAct)}</div>
                 <div style="display:flex;align-items:stretch">
                   <div style="flex:1 1 0;min-width:0"><div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">📋 Budget</div><div style="font-size:15px;font-weight:600;color:#E2E8F0;margin-top:3px;white-space:nowrap">${fmt(totalBudget)}</div></div>
                   <div style="width:1px;background:#E8EAF0;flex-shrink:0;margin:0 14px"></div>
@@ -733,9 +733,9 @@
       let txType = "expense";
       const updateTypeUI = () => {
         document.getElementById("type-expense").style.background = txType==="expense"?"#5B6EF5":"#F5F6FA";
-        document.getElementById("type-expense").style.color      = txType==="expense"?"#fff":"#8891A5";
+        document.getElementById("type-expense").style.color      = txType==="expense"?"#fff":'#8891A5';
         document.getElementById("type-income").style.background  = txType==="income"?"#10B981":"#F5F6FA";
-        document.getElementById("type-income").style.color       = txType==="income"?"#fff":"#8891A5";
+        document.getElementById("type-income").style.color       = txType==="income"?"#fff":'#8891A5';
         document.getElementById("add-tx-btn").style.background   = txType==="expense"?"#5B6EF5":"#10B981";
         document.getElementById("add-tx-btn").textContent        = `Add ${txType==="expense"?"Expense":"Income"}`;
       };
@@ -880,7 +880,7 @@
             <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}"
               rx="3" fill="${cat.color}" opacity="${selected?1:0.75}" ${selected?`stroke="${cat.color}" stroke-width="2"`:""} />
             <text x="${cx.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle"
-              fill="${selected?cat.color:"#8891A5"}" font-size="9" font-weight="${selected?"700":"400"}" font-family="DM Sans,sans-serif">${d.month}</text>
+              fill="${selected?cat.color:'#8891A5'}" font-size="9" font-weight="${selected?'700':'400'}" font-family="DM Sans,sans-serif">${d.month}</text>
           </g>`;
         });
         // Render tooltip last so it always appears on top of all bars
@@ -943,7 +943,7 @@
               <rect x="${(p.x-hitW/2).toFixed(1)}" y="${padT}" width="${hitW.toFixed(1)}" height="${innerH+28}" fill="transparent"/>
               <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${selected?5.5:3.5}" fill="${cat.color}" ${selected?'stroke="#fff" stroke-width="2"':""} />
               <text x="${p.x.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle"
-                fill="${selected?cat.color:"#8891A5"}" font-size="9" font-weight="${selected?"700":"400"}" font-family="DM Sans,sans-serif">${p.d.month}</text>
+                fill="${selected?cat.color:'#8891A5'}" font-size="9" font-weight="${selected?'700':'400'}" font-family="DM Sans,sans-serif">${p.d.month}</text>
               ${tooltip}
             </g>`;
           }).join("")}`;
@@ -955,7 +955,7 @@
         return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${chartW-padR}" y2="${y.toFixed(1)}"
           stroke="#E8EAF0" stroke-width="1"/>
           <text x="${(padL-6).toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="end"
-            fill="#8891A5" font-size="9" font-family="DM Sans,sans-serif">${yLabels[i]}</text>`;
+            fill='#8891A5' font-size="9" font-family="DM Sans,sans-serif">${yLabels[i]}</text>`;
       }).join("");
 
       const ytdTotal = ytdMonths.reduce((s,d)=>s+d.total,0);
@@ -991,7 +991,7 @@
       const bveGridLines = Array.from({length:ySteps+1},(_,i)=>{
         const y=padT+innerH-(innerH/ySteps)*i;
         return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${chartW-padR}" y2="${y.toFixed(1)}" stroke="#E8EAF0" stroke-width="1"/>
-          <text x="${(padL-6).toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="end" fill="#8891A5" font-size="9" font-family="DM Sans,sans-serif">${bveYLabels[i]}</text>`;
+          <text x="${(padL-6).toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="end" fill='#8891A5' font-size="9" font-family="DM Sans,sans-serif">${bveYLabels[i]}</text>`;
       }).join("");
       const bvePts = (series) => bveData.map((d,i) => ({
         x: padL+(bveN===1?innerW/2:bveGap*i),
@@ -1004,7 +1004,7 @@
       const expensePath = expensePts.map((p,i)=>`${i===0?"M":"L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
       const bveMonthLabels = bveData.map((d,i)=>{
         const x=padL+(bveN===1?innerW/2:bveGap*i);
-        return `<text x="${x.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle" fill="#8891A5" font-size="9" font-family="DM Sans,sans-serif">${d.month}</text>`;
+        return `<text x="${x.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle" fill='#8891A5' font-size="9" font-family="DM Sans,sans-serif">${d.month}</text>`;
       }).join("");
       const selBve = state.selectedBveMonth;
       const bveHitW = Math.max(innerW/Math.max(bveN-1,1), 28);
@@ -1018,7 +1018,7 @@
         const lowerY=Math.max(bp.y,ep.y);
         const ty = lowerY+12+68 > padT+innerH ? lowerY-76 : lowerY+12;
         const tooltip = selected ? `
-          <line x1="${cx.toFixed(1)}" y1="${padT}" x2="${cx.toFixed(1)}" y2="${(padT+innerH).toFixed(1)}" stroke="#8891A5" stroke-width="1" stroke-dasharray="3,2" opacity="0.3"/>
+          <line x1="${cx.toFixed(1)}" y1="${padT}" x2="${cx.toFixed(1)}" y2="${(padT+innerH).toFixed(1)}" stroke='#8891A5' stroke-width="1" stroke-dasharray="3,2" opacity="0.3"/>
           <rect x="${(tx-1).toFixed(1)}" y="${(ty-1).toFixed(1)}" width="${TW+2}" height="68" rx="9" fill="#1E2A3A"/>
           <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="66" rx="8" fill="#1E2A3A"/>
           <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="66" rx="8" fill="none" stroke="#3a4a5e" stroke-width="1"/>
@@ -1050,8 +1050,8 @@
         <div style="${cardStyle()}">
           <!-- Toggle -->
           <div style="display:flex;gap:8px;margin-bottom:16px">
-            <button id="graph-bar-btn" style="flex:1;padding:8px;border-radius:10px;border:none;background:${graphType==="bar"?"#5B6EF5":"#F5F6FA"};color:${graphType==="bar"?"#fff":"#8891A5"};font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s">Bar</button>
-            <button id="graph-line-btn" style="flex:1;padding:8px;border-radius:10px;border:none;background:${graphType==="line"?"#5B6EF5":"#F5F6FA"};color:${graphType==="line"?"#fff":"#8891A5"};font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s">Line</button>
+            <button id="graph-bar-btn" style="flex:1;padding:8px;border-radius:10px;border:none;background:${graphType==="bar"?"#5B6EF5":"#F5F6FA"};color:${graphType==="bar"?"#fff":'#8891A5'};font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s">Bar</button>
+            <button id="graph-line-btn" style="flex:1;padding:8px;border-radius:10px;border:none;background:${graphType==="line"?"#5B6EF5":"#F5F6FA"};color:${graphType==="line"?"#fff":'#8891A5'};font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s">Line</button>
           </div>
           <!-- SVG Chart -->
           <svg width="100%" viewBox="0 0 ${chartW} ${chartH}" style="overflow:visible;display:block">
