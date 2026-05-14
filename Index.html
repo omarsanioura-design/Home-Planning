@@ -24,7 +24,7 @@
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     // ▼▼▼ PASTE YOUR FIREBASE CONFIG HERE ▼▼▼
-  const firebaseConfig = {
+    const firebaseConfig = {
   apiKey: "AIzaSyAIp0oDFqSm1Z7WZ6hPnnGKplSr-fE0Q2w",
   authDomain: "home-planning-dcbe4.firebaseapp.com",
   projectId: "home-planning-dcbe4",
@@ -715,7 +715,7 @@
             <div style="display:flex;justify-content:space-between;align-items:center">
               <div style="display:flex;align-items:center;gap:10px">
                 <span style="font-size:18px">${cat.icon}</span>
-                <div><div style="font-weight:600;font-size:14px">${cat.name}</div><div style="color:#8888aa;font-size:12px">${fmt(effectiveBudgets[cat.name]||0)}${overrides[monthKey]&&overrides[monthKey][cat.name]!==undefined?"  <span style='font-size:10px;color:#5B6EF5'>● this month</span>":"  <span style='font-size:10px;color:#8891A5'>carried forward</span>"}</div></div>
+                <div><div style="font-weight:600;font-size:14px">${cat.name}</div><div style="color:#8888aa;font-size:12px">${fmt(effectiveBudgets[cat.name]||0)}${overrides[monthKey]&&overrides[monthKey][cat.name]!==undefined?"<span style=\"font-size:10px;color:#5B6EF5;margin-left:6px;background:#EEF2FF;padding:1px 6px;border-radius:8px;border:1px solid #C7D2FE\">● this month</span>":"<span style=\"font-size:10px;color:#8891A5;margin-left:6px\">carried fwd</span>"}</div></div>
               </div>
               <button data-cat="${cat.name}" class="edit-cat-btn" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-family:inherit">Set</button>
             </div>
@@ -1122,10 +1122,10 @@
 
     // ── Style helpers ─────────────────────────
     function inputStyle() { return "width:100%;background:#F5F6FA;border:1px solid #DDE0EA;border-radius:10px;padding:11px 14px;color:#1A1D2E;font-size:14px;box-sizing:border-box;font-family:'DM Sans',sans-serif;outline:none;"; }
-    function btnStyle(color="#e94560") { return `width:100%;padding:13px;border-radius:12px;border:none;background:${color};color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px;`; }
+    function btnStyle(color="#5B6EF5") { return `width:100%;padding:13px;border-radius:12px;border:none;background:${color};color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px;`; }
     function cardStyle() { return "background:#FFFFFF;border-radius:16px;padding:16px;margin-bottom:0;border:1px solid #E8EAF0;box-shadow:0 1px 4px #0000000a;"; }
     function sectionTitle(t) { return `<div style="font-size:11px;letter-spacing:2px;color:#8891A5;text-transform:uppercase;margin-bottom:12px">${t}</div>`; }
-    function emptyState(icon,line1,line2) { return `<div style="${cardStyle()}text-align:center;color:#8891A5;padding:30px 16px"><div style="font-size:32px;margin-bottom:8px">${icon}</div><div>${line1}</div>${line2?`<div style="font-size:12px;margin-top:4px">${line2}</div>`:""}</div>`; }
+    function emptyState(icon,line1,line2) { return `<div style="${cardStyle()}text-align:center;color:#8891A5;padding:30px 16px"><div style="font-size:32px;margin-bottom:8px">${icon}</div><div>${line1}</div>${line2?"<div style='font-size:12px;margin-top:4px'>"+line2+"</div>":""}</div>`; }
 
     // ── Boot ──────────────────────────────────
     render();
@@ -1136,11 +1136,11 @@
     body { background: #F5F6FA; overscroll-behavior: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
     input::placeholder { color: #5a5a7a; }
-    input:focus { border-color: #e9456060 !important; }
-    select option { background: #16213e; }
+    input:focus { border-color: #5B6EF560 !important; }
+    select option { background: #FFFFFF; color: #1A1D2E; }
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #ffffff20; border-radius: 2px; }
+    ::-webkit-scrollbar-thumb { background: #DDE0EA; border-radius: 2px; }
   </style>
 </head>
 <body>
