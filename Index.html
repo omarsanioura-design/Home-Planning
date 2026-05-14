@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <title>HomeWise · Household Budget</title>
   <link rel="manifest" href="manifest.json" />
-  <meta name="theme-color" content="#F5F6FA" />
+  <meta name="theme-color" content="#0d0d1a" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
 
   <!-- ════════════════════════════════════════════
@@ -74,7 +74,6 @@
       transactions: [],
       allTransactions: [],
       budgets: {},
-      budgetOverrides: {},
       income: 0,
       members: [],
       authMode: "login",   // login | register | forgot
@@ -148,10 +147,9 @@
       unsubSettings = onSnapshot(doc(db, settingsPath()), snap => {
         if (snap.exists()) {
           const d = snap.data();
-          state.income          = d.income          || 0;
-          state.budgets         = d.budgets         || {};
-          state.budgetOverrides = d.budgetOverrides || {};
-          state.members         = d.members         || [];
+          state.income  = d.income  || 0;
+          state.budgets = d.budgets || {};
+          state.members = d.members || [];
           render();
         }
       });
@@ -174,48 +172,6 @@
 
     async function saveSettings(income, budgets) {
       await setDoc(doc(db, settingsPath()), { income, budgets, members: state.members }, {merge:true});
-    }
-
-    // Save budget for a specific month — carries forward to future months unless overridden
-    async function saveMonthBudget(category, value) {
-      const { month, year } = state;
-      const key = `budget_${year}_${month}`;
-      // Store as month-specific override
-      const overrides = state.budgetOverrides || {};
-      overrides[key] = { ...(overrides[key] || {}), [category]: value };
-      state.budgetOverrides = overrides;
-      await setDoc(doc(db, settingsPath()), { budgetOverrides: overrides }, {merge:true});
-    }
-
-    async function saveBaseIncome(income) {
-      await setDoc(doc(db, settingsPath()), { income, members: state.members }, {merge:true});
-    }
-
-    // Get the effective budget for the current month:
-    // Use month-specific override if it exists, otherwise walk back month by month
-    // to find the most recent override, then fall back to the base budgets object
-    function getEffectiveBudgets() {
-      const { month, year } = state;
-      const overrides = state.budgetOverrides || {};
-      const base      = state.budgets || {};
-
-      // Build result: for each category, find most recent override <= current month
-      const result = {};
-      CATEGORIES.forEach(cat => {
-        // Look for an override in current month, then walk backwards up to 24 months
-        let found = null;
-        for (let m = month, y = year, i = 0; i < 24; i++) {
-          const key = `budget_${y}_${m}`;
-          if (overrides[key] && overrides[key][cat.name] !== undefined) {
-            found = overrides[key][cat.name];
-            break;
-          }
-          // Step back one month
-          if (m === 0) { m = 11; y--; } else { m--; }
-        }
-        result[cat.name] = found !== null ? found : (base[cat.name] || 0);
-      });
-      return result;
     }
 
     // ── Auth ──────────────────────────────────
@@ -245,7 +201,7 @@
 
       if (state.loading) {
         root.innerHTML = `
-          <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#F5F6FA;flex-direction:column;gap:16px">
+          <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0d1a;flex-direction:column;gap:16px">
             <div style="font-family:Syne,sans-serif;font-size:22px;color:#5B6EF5;font-weight:800;letter-spacing:-1px">HomeWise</div>
             <div style="width:32px;height:32px;border:3px solid #E8EAF0;border-top-color:#5B6EF5;border-radius:50%;animation:spin 0.8s linear infinite"></div>
           </div>`;
@@ -377,7 +333,7 @@
             if (rules) rules.style.display = p.length > 0 ? "flex" : "none";
             const setRule = (id, ok) => {
               const el = document.getElementById(id);
-              if (el) { el.textContent = (ok ? "✅" : "○") + el.textContent.slice(1); el.style.color = ok ? "#10B981" : '#8891A5'; }
+              if (el) { el.textContent = (ok ? "✅" : "○") + el.textContent.slice(1); el.style.color = ok ? "#10B981" : "#8891A5"; }
             };
             setRule("rule-len",   p.length >= 8);
             setRule("rule-upper", /[A-Z]/.test(p));
@@ -486,11 +442,10 @@
 
     // ── Main App ──────────────────────────────
     function renderApp(root) {
-      const { tab, month, year, transactions, income } = state;
+      const { tab, month, year, transactions, budgets, income } = state;
       const expenses = transactions.filter(t=>t.type==="expense");
       const totalExp = expenses.reduce((s,t)=>s+t.amount,0);
       const totalInc = transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0) + income;
-      const budgets      = getEffectiveBudgets();
       const balance      = totalInc - totalExp;
       const totalBudget  = Object.values(budgets).reduce((s,v)=>s+v,0);
       const budgetVsAct  = totalBudget - totalExp;
@@ -523,13 +478,13 @@
           ${tab==="dashboard"  ? renderDashboard(expenses, spentByCat, budgets) : ""}
           ${tab==="add"        ? renderAdd() : ""}
           ${tab==="transactions"? renderTransactions(transactions) : ""}
-          ${tab==="budget"     ? renderBudget(income) : ""}
+          ${tab==="budget"     ? renderBudget(income, budgets) : ""}
           ${tab==="graphs"     ? renderGraphs(state.allTransactions || state.transactions, state.graphCat, state.graphType, state.year) : ""}
 
           <!-- Nav -->
           <nav style="position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#FFFFFF;border-top:1px solid #E8EAF0;display:flex;z-index:100;box-shadow:0 -2px 12px #0000000a">
             ${[["dashboard","📊","Overview"],["add","➕","Add"],["transactions","🧾","History"],["budget","🎯","Budgets"],["graphs","📈","Graphs"]]
-              .map(([id,ic,lb])=>`<button data-tab="${id}" style="flex:1;padding:12px 0 8px;border:none;background:transparent;color:${tab===id?"#5B6EF5":'#8891A5'};cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:9px;letter-spacing:.5px;font-family:inherit;transition:color .2s"><span style="font-size:20px">${ic}</span>${lb}</button>`).join("")}
+              .map(([id,ic,lb])=>`<button data-tab="${id}" style="flex:1;padding:12px 0 8px;border:none;background:transparent;color:${tab===id?"#5B6EF5":"#8891A5"};cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:9px;letter-spacing:.5px;font-family:inherit;transition:color .2s"><span style="font-size:20px">${ic}</span>${lb}</button>`).join("")}
           </nav>
         </div>`;
 
@@ -576,13 +531,13 @@
         document.querySelectorAll("[data-dot]").forEach(dot => {
           const i = parseInt(dot.dataset.dot);
           dot.style.width = state.cardIdx === i ? "18px" : "6px";
-          dot.style.background = state.cardIdx === i ? "#5B6EF5" : "#DDE0EA";
+          dot.style.background = state.cardIdx === i ? "#e8e8f0" : "#ffffff30";
         });
       }
 
       // Add tx form
       if (tab==="add") bindAddForm();
-      if (tab==="budget") bindBudgetForm(income);
+      if (tab==="budget") bindBudgetForm(income, budgets);
       if (tab==="transactions") bindDeleteButtons();
       if (tab==="graphs") bindGraphs();
     }
@@ -600,22 +555,22 @@
             <div id="card-track" style="display:flex;transform:translateX(0%);transition:transform 0.35s cubic-bezier(.4,0,.2,1)">
               <!-- Card 0: Balance -->
               <div style="min-width:100%;background:#1E2A3A;border-radius:16px;padding:18px 20px;box-shadow:0 2px 8px #0000000f;border:1px solid #1E2A3A;box-sizing:border-box">
-                <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#94A3B8;margin-bottom:6px">Balance</div>
-                <div style="font-family:'DM Sans',sans-serif;font-size:28px;font-weight:700;margin:4px 0 14px;letter-spacing:-0.5px;color:${balance>=0?"#10B981":"#EF4444"}">${fmt(balance)}</div>
+                <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#94A3B8;margin-bottom:4px">Balance</div>
+                <div style="font-family:Syne,sans-serif;font-size:32px;font-weight:800;margin:4px 0 14px;letter-spacing:-2px;color:${balance>=0?"#10B981":"#EF4444"}">${fmt(balance)}</div>
                 <div style="display:flex;align-items:stretch">
-                  <div style="flex:1 1 0;min-width:0"><div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">↑ Income</div><div style="font-size:15px;font-weight:600;color:#10B981;margin-top:3px;white-space:nowrap">${fmt(totalInc)}</div></div>
+                  <div style="flex:1 1 0;min-width:0"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">↑ Income</div><div style="font-size:14px;font-weight:600;color:#10B981;margin-top:2px;white-space:nowrap">${fmt(totalInc)}</div></div>
                   <div style="width:1px;background:#E8EAF0;flex-shrink:0;margin:0 14px"></div>
-                  <div style="flex:1 1 0;min-width:0;text-align:right"><div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">↓ Expenses</div><div style="font-size:15px;font-weight:600;color:#EF4444;margin-top:3px;white-space:nowrap">${fmt(totalExp)}</div></div>
+                  <div style="flex:1 1 0;min-width:0;text-align:right"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">↓ Expenses</div><div style="font-size:14px;font-weight:600;color:#EF4444;margin-top:2px;white-space:nowrap">${fmt(totalExp)}</div></div>
                 </div>
               </div>
               <!-- Card 1: Budget vs Actuals -->
               <div style="min-width:100%;background:#1E2A3A;border-radius:16px;padding:18px 20px;box-shadow:0 2px 8px #0000000f;border:1px solid #1E2A3A;box-sizing:border-box">
-                <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#94A3B8;margin-bottom:6px">Budget vs Actuals</div>
-                <div style="font-family:'DM Sans',sans-serif;font-size:28px;font-weight:700;margin:4px 0 14px;letter-spacing:-0.5px;color:${budgetVsAct>=0?"#10B981":"#EF4444"}">${budgetVsAct>=0?"+":""}${fmt(budgetVsAct)}</div>
+                <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#94A3B8;margin-bottom:4px">Budget vs Actuals</div>
+                <div style="font-family:Syne,sans-serif;font-size:32px;font-weight:800;margin:4px 0 14px;letter-spacing:-2px;color:${budgetVsAct>=0?"#10B981":"#EF4444"}">${budgetVsAct>=0?"+":""}${fmt(budgetVsAct)}</div>
                 <div style="display:flex;align-items:stretch">
-                  <div style="flex:1 1 0;min-width:0"><div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">📋 Budget</div><div style="font-size:15px;font-weight:600;color:#E2E8F0;margin-top:3px;white-space:nowrap">${fmt(totalBudget)}</div></div>
+                  <div style="flex:1 1 0;min-width:0"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">📋 Budget</div><div style="font-size:14px;font-weight:600;color:#E2E8F0;margin-top:2px;white-space:nowrap">${fmt(totalBudget)}</div></div>
                   <div style="width:1px;background:#E8EAF0;flex-shrink:0;margin:0 14px"></div>
-                  <div style="flex:1 1 0;min-width:0;text-align:right"><div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">↓ Expenses</div><div style="font-size:15px;font-weight:600;color:#EF4444;margin-top:3px;white-space:nowrap">${fmt(totalExp)}</div></div>
+                  <div style="flex:1 1 0;min-width:0;text-align:right"><div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94A3B8;white-space:nowrap">↓ Expenses</div><div style="font-size:14px;font-weight:600;color:#EF4444;margin-top:2px;white-space:nowrap">${fmt(totalExp)}</div></div>
                 </div>
               </div>
             </div>
@@ -688,16 +643,8 @@
       </div>`;
     }
 
-    function renderBudget(income) {
-      const effectiveBudgets = getEffectiveBudgets();
-      const { month, year } = state;
-      const overrides = state.budgetOverrides || {};
-      const monthKey = `budget_${year}_${month}`;
-      return `<div style="padding:16px 20px 0">
-        <div style="font-size:11px;color:#8891A5;margin-bottom:12px;padding:10px 14px;background:#EEF2FF;border-radius:10px;border:1px solid #C7D2FE;line-height:1.5">
-          💡 Budgets set here apply to <strong>this month and carry forward</strong> to future months. Changing a future month's budget only affects that month onwards.
-        </div>
-        ${sectionTitle("Monthly Budgets")}
+    function renderBudget(income, budgets) {
+      return `<div style="padding:16px 20px 0">${sectionTitle("Monthly Budgets")}
         <div style="${cardStyle()}">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <div><div style="font-weight:600;font-size:14px">💰 Base Monthly Income</div><div style="color:#8888aa;font-size:12px;margin-top:2px">${fmt(income)}</div></div>
@@ -715,13 +662,13 @@
             <div style="display:flex;justify-content:space-between;align-items:center">
               <div style="display:flex;align-items:center;gap:10px">
                 <span style="font-size:18px">${cat.icon}</span>
-                <div><div style="font-weight:600;font-size:14px">${cat.name}</div><div style="color:#8888aa;font-size:12px">${fmt(effectiveBudgets[cat.name]||0)}${overrides[monthKey]&&overrides[monthKey][cat.name]!==undefined?"<span style=\"font-size:10px;color:#5B6EF5;margin-left:6px;background:#EEF2FF;padding:1px 6px;border-radius:8px;border:1px solid #C7D2FE\">● this month</span>":"<span style=\"font-size:10px;color:#8891A5;margin-left:6px\">carried fwd</span>"}</div></div>
+                <div><div style="font-weight:600;font-size:14px">${cat.name}</div><div style="color:#8888aa;font-size:12px">${fmt(budgets[cat.name]||0)}</div></div>
               </div>
               <button data-cat="${cat.name}" class="edit-cat-btn" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-family:inherit">Set</button>
             </div>
             <div id="cat-form-${cat.name}" style="display:none;margin-top:12px">
               <div style="display:flex;gap:8px">
-                <input id="cat-input-${cat.name}" type="number" placeholder="Budget amount" value="${effectiveBudgets[cat.name]||""}" style="${inputStyle()}flex:1" />
+                <input id="cat-input-${cat.name}" type="number" placeholder="Budget amount" value="${budgets[cat.name]||""}" style="${inputStyle()}flex:1" />
                 <button data-savecat="${cat.name}" style="${btnStyle(cat.color)}width:auto;padding:11px 18px;margin-top:0">Save</button>
               </div>
             </div>
@@ -732,11 +679,11 @@
     function bindAddForm() {
       let txType = "expense";
       const updateTypeUI = () => {
-        document.getElementById("type-expense").style.background = txType==="expense"?"#5B6EF5":"#F5F6FA";
-        document.getElementById("type-expense").style.color      = txType==="expense"?"#fff":'#8891A5';
-        document.getElementById("type-income").style.background  = txType==="income"?"#10B981":"#F5F6FA";
-        document.getElementById("type-income").style.color       = txType==="income"?"#fff":'#8891A5';
-        document.getElementById("add-tx-btn").style.background   = txType==="expense"?"#5B6EF5":"#10B981";
+        document.getElementById("type-expense").style.background = txType==="expense"?"#e94560":"#1a1a2e";
+        document.getElementById("type-expense").style.color      = txType==="expense"?"#fff":"#8888aa";
+        document.getElementById("type-income").style.background  = txType==="income"?"#4ECDC4":"#1a1a2e";
+        document.getElementById("type-income").style.color       = txType==="income"?"#fff":"#8888aa";
+        document.getElementById("add-tx-btn").style.background   = txType==="expense"?"#e94560":"#4ECDC4";
         document.getElementById("add-tx-btn").textContent        = `Add ${txType==="expense"?"Expense":"Income"}`;
       };
       document.getElementById("type-expense").onclick = () => { txType="expense"; updateTypeUI(); };
@@ -762,7 +709,7 @@
       });
     }
 
-    function bindBudgetForm(income) {
+    function bindBudgetForm(income, budgets) {
       let incomeOpen = false;
       document.getElementById("edit-income-btn").onclick = () => {
         incomeOpen = !incomeOpen;
@@ -771,8 +718,7 @@
       };
       document.getElementById("save-income-btn").onclick = async () => {
         const val = parseFloat(document.getElementById("income-input").value)||0;
-        state.income = val;
-        await saveBaseIncome(val);
+        await saveSettings(val, state.budgets);
         showToast("Income saved!");
         incomeOpen=false;
         document.getElementById("income-form").style.display="none";
@@ -791,11 +737,11 @@
         btn.onclick = async () => {
           const cat = btn.dataset.savecat;
           const val = parseFloat(document.getElementById(`cat-input-${cat}`).value)||0;
-          await saveMonthBudget(cat, val);
-          showToast(`${cat} budget saved & carries forward!`);
+          const newBudgets = {...state.budgets, [cat]: val};
+          await saveSettings(state.income, newBudgets);
+          showToast(`${cat} budget saved!`);
           document.getElementById(`cat-form-${cat}`).style.display="none";
           document.getElementById(`cat-card-${cat}`).querySelector(".edit-cat-btn").textContent="Set";
-          render();
         };
       });
     }
@@ -880,7 +826,7 @@
             <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}"
               rx="3" fill="${cat.color}" opacity="${selected?1:0.75}" ${selected?`stroke="${cat.color}" stroke-width="2"`:""} />
             <text x="${cx.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle"
-              fill="${selected?cat.color:'#8891A5'}" font-size="9" font-weight="${selected?'700':'400'}" font-family="DM Sans,sans-serif">${d.month}</text>
+              fill="${selected?cat.color:"#8891A5"}" font-size="9" font-weight="${selected?"700":"400"}" font-family="DM Sans,sans-serif">${d.month}</text>
           </g>`;
         });
         // Render tooltip last so it always appears on top of all bars
@@ -943,7 +889,7 @@
               <rect x="${(p.x-hitW/2).toFixed(1)}" y="${padT}" width="${hitW.toFixed(1)}" height="${innerH+28}" fill="transparent"/>
               <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${selected?5.5:3.5}" fill="${cat.color}" ${selected?'stroke="#fff" stroke-width="2"':""} />
               <text x="${p.x.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle"
-                fill="${selected?cat.color:'#8891A5'}" font-size="9" font-weight="${selected?'700':'400'}" font-family="DM Sans,sans-serif">${p.d.month}</text>
+                fill="${selected?cat.color:"#8891A5"}" font-size="9" font-weight="${selected?"700":"400"}" font-family="DM Sans,sans-serif">${p.d.month}</text>
               ${tooltip}
             </g>`;
           }).join("")}`;
@@ -955,7 +901,7 @@
         return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${chartW-padR}" y2="${y.toFixed(1)}"
           stroke="#E8EAF0" stroke-width="1"/>
           <text x="${(padL-6).toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="end"
-            fill='#8891A5' font-size="9" font-family="DM Sans,sans-serif">${yLabels[i]}</text>`;
+            fill="#8891A5" font-size="9" font-family="DM Sans,sans-serif">${yLabels[i]}</text>`;
       }).join("");
 
       const ytdTotal = ytdMonths.reduce((s,d)=>s+d.total,0);
@@ -991,7 +937,7 @@
       const bveGridLines = Array.from({length:ySteps+1},(_,i)=>{
         const y=padT+innerH-(innerH/ySteps)*i;
         return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${chartW-padR}" y2="${y.toFixed(1)}" stroke="#E8EAF0" stroke-width="1"/>
-          <text x="${(padL-6).toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="end" fill='#8891A5' font-size="9" font-family="DM Sans,sans-serif">${bveYLabels[i]}</text>`;
+          <text x="${(padL-6).toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="end" fill="#8891A5" font-size="9" font-family="DM Sans,sans-serif">${bveYLabels[i]}</text>`;
       }).join("");
       const bvePts = (series) => bveData.map((d,i) => ({
         x: padL+(bveN===1?innerW/2:bveGap*i),
@@ -1004,7 +950,7 @@
       const expensePath = expensePts.map((p,i)=>`${i===0?"M":"L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
       const bveMonthLabels = bveData.map((d,i)=>{
         const x=padL+(bveN===1?innerW/2:bveGap*i);
-        return `<text x="${x.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle" fill='#8891A5' font-size="9" font-family="DM Sans,sans-serif">${d.month}</text>`;
+        return `<text x="${x.toFixed(1)}" y="${(padT+innerH+18).toFixed(1)}" text-anchor="middle" fill="#8891A5" font-size="9" font-family="DM Sans,sans-serif">${d.month}</text>`;
       }).join("");
       const selBve = state.selectedBveMonth;
       const bveHitW = Math.max(innerW/Math.max(bveN-1,1), 28);
@@ -1018,7 +964,7 @@
         const lowerY=Math.max(bp.y,ep.y);
         const ty = lowerY+12+68 > padT+innerH ? lowerY-76 : lowerY+12;
         const tooltip = selected ? `
-          <line x1="${cx.toFixed(1)}" y1="${padT}" x2="${cx.toFixed(1)}" y2="${(padT+innerH).toFixed(1)}" stroke='#8891A5' stroke-width="1" stroke-dasharray="3,2" opacity="0.3"/>
+          <line x1="${cx.toFixed(1)}" y1="${padT}" x2="${cx.toFixed(1)}" y2="${(padT+innerH).toFixed(1)}" stroke="#8891A5" stroke-width="1" stroke-dasharray="3,2" opacity="0.3"/>
           <rect x="${(tx-1).toFixed(1)}" y="${(ty-1).toFixed(1)}" width="${TW+2}" height="68" rx="9" fill="#1E2A3A"/>
           <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="66" rx="8" fill="#1E2A3A"/>
           <rect x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" width="${TW}" height="66" rx="8" fill="none" stroke="#3a4a5e" stroke-width="1"/>
@@ -1050,8 +996,8 @@
         <div style="${cardStyle()}">
           <!-- Toggle -->
           <div style="display:flex;gap:8px;margin-bottom:16px">
-            <button id="graph-bar-btn" style="flex:1;padding:8px;border-radius:10px;border:none;background:${graphType==="bar"?"#5B6EF5":"#F5F6FA"};color:${graphType==="bar"?"#fff":'#8891A5'};font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s">Bar</button>
-            <button id="graph-line-btn" style="flex:1;padding:8px;border-radius:10px;border:none;background:${graphType==="line"?"#5B6EF5":"#F5F6FA"};color:${graphType==="line"?"#fff":'#8891A5'};font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s">Line</button>
+            <button id="graph-bar-btn" style="flex:1;padding:8px;border-radius:10px;border:none;background:${graphType==="bar"?"#5B6EF5":"#F5F6FA"};color:${graphType==="bar"?"#fff":"#8891A5"};font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s">Bar</button>
+            <button id="graph-line-btn" style="flex:1;padding:8px;border-radius:10px;border:none;background:${graphType==="line"?"#5B6EF5":"#F5F6FA"};color:${graphType==="line"?"#fff":"#8891A5"};font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s">Line</button>
           </div>
           <!-- SVG Chart -->
           <svg width="100%" viewBox="0 0 ${chartW} ${chartH}" style="overflow:visible;display:block">
@@ -1122,10 +1068,10 @@
 
     // ── Style helpers ─────────────────────────
     function inputStyle() { return "width:100%;background:#F5F6FA;border:1px solid #DDE0EA;border-radius:10px;padding:11px 14px;color:#1A1D2E;font-size:14px;box-sizing:border-box;font-family:'DM Sans',sans-serif;outline:none;"; }
-    function btnStyle(color="#5B6EF5") { return `width:100%;padding:13px;border-radius:12px;border:none;background:${color};color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px;`; }
+    function btnStyle(color="#e94560") { return `width:100%;padding:13px;border-radius:12px;border:none;background:${color};color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px;`; }
     function cardStyle() { return "background:#FFFFFF;border-radius:16px;padding:16px;margin-bottom:0;border:1px solid #E8EAF0;box-shadow:0 1px 4px #0000000a;"; }
     function sectionTitle(t) { return `<div style="font-size:11px;letter-spacing:2px;color:#8891A5;text-transform:uppercase;margin-bottom:12px">${t}</div>`; }
-    function emptyState(icon,line1,line2) { return `<div style="${cardStyle()}text-align:center;color:#8891A5;padding:30px 16px"><div style="font-size:32px;margin-bottom:8px">${icon}</div><div>${line1}</div>${line2?"<div style='font-size:12px;margin-top:4px'>"+line2+"</div>":""}</div>`; }
+    function emptyState(icon,line1,line2) { return `<div style="${cardStyle()}text-align:center;color:#8891A5;padding:30px 16px"><div style="font-size:32px;margin-bottom:8px">${icon}</div><div>${line1}</div>${line2?`<div style="font-size:12px;margin-top:4px">${line2}</div>`:""}</div>`; }
 
     // ── Boot ──────────────────────────────────
     render();
@@ -1136,11 +1082,11 @@
     body { background: #F5F6FA; overscroll-behavior: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
     input::placeholder { color: #5a5a7a; }
-    input:focus { border-color: #5B6EF560 !important; }
-    select option { background: #FFFFFF; color: #1A1D2E; }
+    input:focus { border-color: #e9456060 !important; }
+    select option { background: #16213e; }
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #DDE0EA; border-radius: 2px; }
+    ::-webkit-scrollbar-thumb { background: #ffffff20; border-radius: 2px; }
   </style>
 </head>
 <body>
