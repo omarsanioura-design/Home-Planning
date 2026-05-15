@@ -66,9 +66,11 @@
       tab: "dashboard",
       cardIdx: 0,
       graphCat: "Rent",
+      budgetSubTab: "budgets",  // budgets | recurring
       graphType: "bar",
       selectedCatMonth: null,
       selectedBveMonth: null,
+      recurring: [],    // array of recurring expense definitions
       month: new Date().getMonth(),
       year:  new Date().getFullYear(),
       transactions: [],
@@ -152,6 +154,7 @@
           state.budgets         = d.budgets         || {};
           state.budgetOverrides = d.budgetOverrides || {};
           state.members         = d.members         || [];
+          state.recurring       = d.recurring       || [];
           render();
         }
       });
@@ -218,6 +221,48 @@
       return result;
     }
 
+    // ── Recurring helpers ────────────────────────────────────
+    async function saveRecurring(list) {
+      state.recurring = list;
+      await setDoc(doc(db, settingsPath()), { recurring: list }, {merge:true});
+    }
+
+    // Get total forecast recurring spend for a category in a given month/year
+    function forecastForCategory(cat, month, year) {
+      return (state.recurring || [])
+        .filter(r => r.category === cat && r.active !== false)
+        .reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+    }
+
+    // Get all recurring items for a category
+    function recurringForCategory(cat) {
+      return (state.recurring || []).filter(r => r.category === cat && r.active !== false);
+    }
+
+    // Auto-post recurring transactions for the current month if not already posted
+    async function autoPostRecurring(month, year) {
+      const existing = state.allTransactions || state.transactions;
+      for (const r of (state.recurring || [])) {
+        if (r.active === false) continue;
+        // Check if already posted this month
+        const alreadyPosted = existing.some(t =>
+          t.recurringId === r.id && t.month === month && t.year === year
+        );
+        if (!alreadyPosted) {
+          await addDoc(collection(db, txPath()), {
+            description: r.name,
+            amount: parseFloat(r.amount),
+            category: r.category,
+            type: "expense",
+            month, year,
+            addedBy: "recurring",
+            recurringId: r.id,
+            createdAt: Date.now()
+          });
+        }
+      }
+    }
+
     // ── Auth ──────────────────────────────────
     onAuthStateChanged(auth, async user => {
       if (user) {
@@ -226,6 +271,9 @@
         subscribeToHousehold();
         state.loading = false;
         state.tab = "dashboard";
+        // Auto-post any recurring expenses for current month
+        const now = new Date();
+        setTimeout(() => autoPostRecurring(now.getMonth(), now.getFullYear()), 2000);
       } else {
         currentUser = null;
         householdId = null;
@@ -489,7 +537,15 @@
       const { tab, month, year, transactions, income } = state;
       const expenses = transactions.filter(t=>t.type==="expense");
       const totalExp = expenses.reduce((s,t)=>s+t.amount,0);
-      const totalInc = transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0) + income;
+      // Use effective income for this month (carry-forward override)
+      let effectiveMonthIncome = income;
+      const _overrides = state.budgetOverrides || {};
+      for (let m=month, y=year, i=0; i<24; i++) {
+        const k = `budget_${y}_${m}`;
+        if (_overrides[k] && _overrides[k]["__income__"] !== undefined) { effectiveMonthIncome = _overrides[k]["__income__"]; break; }
+        if (m===0){m=11;y--;}else m--;
+      }
+      const totalInc = transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0) + effectiveMonthIncome;
       const budgets      = getEffectiveBudgets();
       const balance      = totalInc - totalExp;
       const totalBudget  = Object.values(budgets).reduce((s,v)=>s+v,0);
@@ -528,7 +584,7 @@
 
           <!-- Nav -->
           <nav style="position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#FFFFFF;border-top:1px solid #E8EAF0;display:flex;z-index:100;box-shadow:0 -2px 12px #0000000a">
-            ${[["dashboard","📊","Overview"],["add","➕","Add"],["transactions","🧾","History"],["budget","🎯","Budgets"],["graphs","📈","Graphs"]]
+            ${[["dashboard","📊","Overview"],["add","➕","Add"],["transactions","🧾","History"],["graphs","📈","Graphs"],["budget","🎯","Budgets"]]
               .map(([id,ic,lb])=>`<button data-tab="${id}" style="flex:1;padding:12px 0 8px;border:none;background:transparent;color:${tab===id?"#5B6EF5":'#8891A5'};cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:9px;letter-spacing:.5px;font-family:inherit;transition:color .2s"><span style="font-size:20px">${ic}</span>${lb}</button>`).join("")}
           </nav>
         </div>`;
@@ -585,6 +641,7 @@
       if (tab==="budget") bindBudgetForm(income);
       if (tab==="transactions") bindDeleteButtons();
       if (tab==="graphs") bindGraphs();
+      if (tab==="budget")    { bindBudgetForm(income); bindRecurring(); }
     }
 
     function renderDashboard(expenses, spentByCat, budgets) {
@@ -633,19 +690,31 @@
         if (spent===0 && budget===0) return "";
         const pct = budget>0 ? Math.min((spent/budget)*100,100) : 0;
         const over = spent>budget && budget>0;
+        const forecast = forecastForCategory(cat.name, month, year);
+        const forecastRemaining = Math.max(forecast - spent, 0);
         return `
           <div style="${cardStyle()}">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:${budget>0?10:0}px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:${budget>0||forecast>0?10:0}px">
               <div style="display:flex;align-items:center;gap:10px">
                 <div style="width:38px;height:38px;border-radius:12px;background:${cat.color}22;display:flex;align-items:center;justify-content:center;font-size:18px">${cat.icon}</div>
-                <div><div style="font-size:14px;font-weight:600">${cat.name}</div>${budget>0?`<div style="font-size:11px;color:#8888aa;margin-top:1px">${Math.round(pct)}% of budget</div>`:""}</div>
+                <div>
+                  <div style="font-size:14px;font-weight:600">${cat.name}</div>
+                  ${budget>0?`<div style="font-size:11px;color:#8891A5;margin-top:1px">${Math.round(pct)}% of budget</div>`:""}
+                  ${forecast>0?`<div style="font-size:11px;color:#F59E0B;margin-top:1px">🔄 ${fmt(forecast)} recurring</div>`:""}
+                </div>
               </div>
-              <div style="text-align:right">
+              <div style="text-align:right;flex-shrink:0;min-width:80px">
                 <div style="font-size:14px;font-weight:600;color:${over?"#EF4444":"#1A1D2E"}">${fmt(spent)}</div>
-                ${budget>0?`<div style="font-size:11px;color:#8888aa">of ${fmt(budget)}</div>`:""}
+                ${budget>0?`<div style="font-size:11px;color:#8891A5">of ${fmt(budget)}</div>`:""}
+                ${forecast>0&&forecastRemaining>0?`<div style="font-size:11px;color:#F59E0B">+${fmt(forecastRemaining)} due</div>`:""}
               </div>
             </div>
-            ${budget>0?`<div style="background:#F5F6FA;border-radius:4px;height:6px;overflow:hidden"><div style="height:100%;border-radius:4px;width:${pct}%;background:${over?"#FF6B6B":cat.color};transition:width .5s"></div></div>`:""}
+            ${budget>0?`<div style="background:#F5F6FA;border-radius:4px;height:6px;overflow:hidden">
+              <div style="height:100%;border-radius:4px;width:${pct}%;background:${over?"#EF4444":cat.color};transition:width .5s"></div>
+            </div>`:""}
+            ${forecast>0&&budget>0?`<div style="background:#FEF3C7;border-radius:4px;height:3px;overflow:hidden;margin-top:2px">
+              <div style="height:100%;border-radius:4px;width:${Math.min((forecast/budget)*100,100)}%;background:#F59E0B;"></div>
+            </div>`:""}
           </div>`;
       }).join("");
       return metricCards + `<div style="padding:16px 20px 8px">${sectionTitle("Spending by Category")}${rows||emptyState("📊","No expenses yet this month","Add transactions to see your spending")}</div>`;
@@ -661,9 +730,14 @@
           <div style="display:flex;flex-direction:column;gap:10px">
             <input id="tx-desc" placeholder="Description" style="${inputStyle()}" />
             <input id="tx-amt"  placeholder="Amount (e.g. 42.50)" type="number" style="${inputStyle()}" />
-            <select id="tx-cat" style="${inputStyle()}appearance:none">
-              ${CATEGORIES.map(c=>`<option value="${c.name}">${c.icon} ${c.name}</option>`).join("")}
-            </select>
+            <div id="cat-row">
+              <select id="tx-cat" style="${inputStyle()}appearance:none">
+                ${CATEGORIES.map(c=>`<option value="${c.name}">${c.icon} ${c.name}</option>`).join("")}
+              </select>
+            </div>
+            <div id="income-note" style="display:none;background:#DCFCE7;border:1px solid #86EFAC;border-radius:10px;padding:10px 14px;font-size:12px;color:#166534;line-height:1.5">
+              💰 Income will be added to your <strong>monthly income total</strong> for ${SHORT[month]} ${year}.
+            </div>
             <button id="add-tx-btn" style="${btnStyle()}">Add Expense</button>
           </div>
         </div>
@@ -672,18 +746,39 @@
 
     function renderTransactions(transactions) {
       if (!transactions.length) return `<div style="padding:16px 20px 0">${sectionTitle("All Transactions")}${emptyState("🧾","No transactions yet","")}</div>`;
+      const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
       return `<div style="padding:16px 20px 0">${sectionTitle("All Transactions")}
+        <!-- Confirm delete modal -->
+        <div id="delete-modal" style="display:none;position:fixed;inset:0;background:#00000050;z-index:200;align-items:center;justify-content:center">
+          <div style="background:#fff;border-radius:20px;padding:24px;margin:0 24px;box-shadow:0 20px 60px #00000030;max-width:360px;width:100%">
+            <div style="font-size:28px;text-align:center;margin-bottom:12px">🗑️</div>
+            <div style="font-size:16px;font-weight:700;color:#1A1D2E;text-align:center;margin-bottom:8px">Delete Transaction?</div>
+            <div id="delete-modal-desc" style="font-size:13px;color:#8891A5;text-align:center;margin-bottom:20px;line-height:1.5"></div>
+            <div style="display:flex;gap:10px">
+              <button id="delete-cancel-btn" style="flex:1;padding:12px;border-radius:11px;border:1px solid #E8EAF0;background:#F5F6FA;color:#1A1D2E;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Cancel</button>
+              <button id="delete-confirm-btn" style="flex:1;padding:12px;border-radius:11px;border:none;background:#EF4444;color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Delete</button>
+            </div>
+          </div>
+        </div>
         <div style="${cardStyle()}">
-          ${transactions.map((t,i)=>`
-            <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:${i===transactions.length-1?"none":"1px solid #ffffff08"}">
-              <div style="width:40px;height:40px;border-radius:12px;background:${catColor(t.category)}22;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">${catIcon(t.category)}</div>
+          ${transactions.map((t,i)=>{
+            const txDate = t.createdAt ? new Date(t.createdAt) : null;
+            const dateStr = txDate ? `${txDate.getDate()} ${MONTHS_SHORT[txDate.getMonth()]}` : "";
+            return `
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:${i===transactions.length-1?"none":"1px solid #E8EAF0"}">
+              <div style="width:40px;height:40px;border-radius:12px;background:${catColor(t.category)}18;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">${catIcon(t.category)}</div>
               <div style="flex:1;min-width:0">
-                <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.description}</div>
-                <div style="font-size:11px;color:#8888aa;margin-top:2px">${t.category} · ${t.addedBy||""}</div>
+                <div style="font-size:14px;font-weight:600;color:#1A1D2E;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.description}</div>
+                <div style="font-size:11px;color:#8891A5;margin-top:2px;display:flex;align-items:center;gap:6px">
+                  <span>${t.category}</span>
+                  ${dateStr?`<span style="color:#C7D2FE">·</span><span>${dateStr}</span>`:""}
+                  ${t.addedBy?`<span style="color:#C7D2FE">·</span><span style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.addedBy}</span>`:""}
+                </div>
               </div>
-              <div style="font-size:14px;font-weight:600;color:${t.type==="expense"?"#EF4444":"#10B981"};flex-shrink:0">${t.type==="expense"?"-":"+"}${fmt(t.amount)}</div>
-              <button data-del="${t.id}" style="background:none;border:none;color:#EF4444;cursor:pointer;font-size:18px;padding:0 0 0 6px;flex-shrink:0">×</button>
-            </div>`).join("")}
+              <div style="font-size:14px;font-weight:700;color:${t.type==="expense"?"#EF4444":"#10B981"};flex-shrink:0">${t.type==="expense"?"-":"+"}${fmt(t.amount)}</div>
+              <button data-del="${t.id}" data-del-desc="${t.description}" data-del-amt="${fmt(t.amount)}" style="width:28px;height:28px;background:#FEE2E2;border:none;border-radius:8px;color:#EF4444;cursor:pointer;font-size:15px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:700">×</button>
+            </div>`;
+          }).join("")}
         </div>
       </div>`;
     }
@@ -692,41 +787,146 @@
       const effectiveBudgets = getEffectiveBudgets();
       const { month, year } = state;
       const overrides = state.budgetOverrides || {};
-      const monthKey = `budget_${year}_${month}`;
-      return `<div style="padding:16px 20px 0">
-        <div style="font-size:11px;color:#8891A5;margin-bottom:12px;padding:10px 14px;background:#EEF2FF;border-radius:10px;border:1px solid #C7D2FE;line-height:1.5">
-          💡 Budgets set here apply to <strong>this month and carry forward</strong> to future months. Changing a future month's budget only affects that month onwards.
-        </div>
-        ${sectionTitle("Monthly Budgets")}
-        <div style="${cardStyle()}">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <div><div style="font-weight:600;font-size:14px">💰 Base Monthly Income</div><div style="color:#8888aa;font-size:12px;margin-top:2px">${fmt(income)}</div></div>
-            <button id="edit-income-btn" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-family:inherit">Edit</button>
-          </div>
-          <div id="income-form" style="display:none;margin-top:12px">
-            <div style="display:flex;gap:8px">
-              <input id="income-input" type="number" placeholder="Monthly income" value="${income||""}" style="${inputStyle()}flex:1" />
-              <button id="save-income-btn" style="${btnStyle()}width:auto;padding:11px 18px;margin-top:0">Save</button>
-            </div>
-          </div>
-        </div>
-        ${CATEGORIES.map(cat=>`
-          <div style="${cardStyle()}margin-top:10px" id="cat-card-${cat.name}">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <div style="display:flex;align-items:center;gap:10px">
-                <span style="font-size:18px">${cat.icon}</span>
-                <div><div style="font-weight:600;font-size:14px">${cat.name}</div><div style="color:#8888aa;font-size:12px">${fmt(effectiveBudgets[cat.name]||0)}${overrides[monthKey]&&overrides[monthKey][cat.name]!==undefined?"<span style=\"font-size:10px;color:#5B6EF5;margin-left:6px;background:#EEF2FF;padding:1px 6px;border-radius:8px;border:1px solid #C7D2FE\">● this month</span>":"<span style=\"font-size:10px;color:#8891A5;margin-left:6px\">carried fwd</span>"}</div></div>
-              </div>
-              <button data-cat="${cat.name}" class="edit-cat-btn" style="background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-family:inherit">Set</button>
-            </div>
-            <div id="cat-form-${cat.name}" style="display:none;margin-top:12px">
-              <div style="display:flex;gap:8px">
-                <input id="cat-input-${cat.name}" type="number" placeholder="Budget amount" value="${effectiveBudgets[cat.name]||""}" style="${inputStyle()}flex:1" />
-                <button data-savecat="${cat.name}" style="${btnStyle(cat.color)}width:auto;padding:11px 18px;margin-top:0">Save</button>
-              </div>
-            </div>
-          </div>`).join("")}
-      </div>`;
+      const monthKey = "budget_" + year + "_" + month;
+      const subTab = state.budgetSubTab || "budgets";
+      const SHORT_M = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+      // Effective income carry-forward
+      let effectiveIncome = income;
+      for (let m=month, y=year, i=0; i<24; i++) {
+        const k = "budget_" + y + "_" + m;
+        if (overrides[k] && overrides[k]["__income__"] !== undefined) { effectiveIncome = overrides[k]["__income__"]; break; }
+        if (m===0){m=11;y--;}else m--;
+      }
+
+      // Sub-tab pill toggle
+      const pillStyle = (id) => "flex:1;padding:9px 0;border-radius:9px;border:none;cursor:pointer;" +
+        "font-family:\'DM Sans\',sans-serif;font-size:13px;font-weight:600;transition:all .2s;" +
+        "background:" + (subTab===id?"#FFFFFF":"transparent") + ";" +
+        "color:" + (subTab===id?"#5B6EF5":"#8891A5") + ";" +
+        "box-shadow:" + (subTab===id?"0 1px 4px #0000001a":"none");
+
+      // ── BUDGETS content ─────────────────────────────────────────
+      const budgetContent = "<div style=\"font-size:11px;color:#8891A5;margin-bottom:12px;padding:10px 14px;background:#EEF2FF;border-radius:10px;border:1px solid #C7D2FE;line-height:1.5\">" +
+        "\uD83D\uDCA1 Budgets set here apply to <strong>this month and carry forward</strong> to all future months. Adjusting a future month only affects that month onwards." +
+        "</div>" +
+        // Income card
+        "<div style=\"" + cardStyle() + "\">" +
+          "<div style=\"display:flex;justify-content:space-between;align-items:center\">" +
+            "<div>" +
+              "<div style=\"font-weight:600;font-size:14px\">\uD83D\uDCB0 Base Monthly Income</div>" +
+              "<div style=\"display:flex;align-items:center;gap:6px;margin-top:2px\">" +
+                "<span style=\"color:#10B981;font-size:13px;font-weight:600\">" + fmt(effectiveIncome) + "</span>" +
+                (overrides[monthKey] && overrides[monthKey]["__income__"] !== undefined
+                  ? "<span style=\"font-size:10px;color:#5B6EF5;margin-left:6px;background:#EEF2FF;padding:1px 6px;border-radius:8px;border:1px solid #C7D2FE\">\u25CF this month</span>"
+                  : "<span style=\"font-size:10px;color:#8891A5;margin-left:6px\">carried fwd</span>") +
+              "</div>" +
+            "</div>" +
+            "<button id=\"edit-income-btn\" style=\"background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-family:inherit\">Set</button>" +
+          "</div>" +
+          "<div id=\"income-form\" style=\"display:none;margin-top:12px\">" +
+            "<div style=\"display:flex;gap:8px\">" +
+              "<input id=\"income-input\" type=\"number\" placeholder=\"Monthly income\" value=\"" + (effectiveIncome||"") + "\" style=\"" + inputStyle() + "flex:1\" />" +
+              "<button id=\"save-income-btn\" style=\"" + btnStyle() + "width:auto;padding:11px 18px;margin-top:0\">Save</button>" +
+            "</div>" +
+          "</div>" +
+        "</div>" +
+        // Category cards
+        CATEGORIES.map(cat => {
+          const eff = effectiveBudgets[cat.name] || 0;
+          const isOverride = overrides[monthKey] && overrides[monthKey][cat.name] !== undefined;
+          const badge = isOverride
+            ? "<span style=\"font-size:10px;color:#5B6EF5;margin-left:6px;background:#EEF2FF;padding:1px 6px;border-radius:8px;border:1px solid #C7D2FE\">\u25CF this month</span>"
+            : "<span style=\"font-size:10px;color:#8891A5;margin-left:6px\">carried fwd</span>";
+          return "<div style=\"" + cardStyle() + "margin-top:10px\" id=\"cat-card-" + cat.name + "\">" +
+            "<div style=\"display:flex;justify-content:space-between;align-items:center\">" +
+              "<div style=\"display:flex;align-items:center;gap:10px\">" +
+                "<span style=\"font-size:18px\">" + cat.icon + "</span>" +
+                "<div>" +
+                  "<div style=\"font-weight:600;font-size:14px\">" + cat.name + "</div>" +
+                  "<div style=\"display:flex;align-items:center;gap:6px;margin-top:2px\">" +
+                    "<span style=\"color:#8891A5;font-size:12px\">" + fmt(eff) + "</span>" + badge +
+                  "</div>" +
+                "</div>" +
+              "</div>" +
+              "<button data-cat=\"" + cat.name + "\" class=\"edit-cat-btn\" style=\"background:#F5F6FA;border:1px solid #E8EAF0;color:#1A1D2E;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-family:inherit\">Set</button>" +
+            "</div>" +
+            "<div id=\"cat-form-" + cat.name + "\" style=\"display:none;margin-top:12px\">" +
+              "<div style=\"display:flex;gap:8px\">" +
+                "<input id=\"cat-input-" + cat.name + "\" type=\"number\" placeholder=\"Budget amount\" value=\"" + (eff||"") + "\" style=\"" + inputStyle() + "flex:1\" />" +
+                "<button data-savecat=\"" + cat.name + "\" style=\"" + btnStyle(cat.color) + "width:auto;padding:11px 18px;margin-top:0\">Save</button>" +
+              "</div>" +
+            "</div>" +
+          "</div>";
+        }).join("");
+
+      // ── RECURRING content ────────────────────────────────────────
+      const rec = state.recurring || [];
+      const totalRec = rec.reduce((s,r) => s + (parseFloat(r.amount)||0), 0);
+      const CAL_DAYS = ["Su","Mo","Tu","We","Th","Fr","Sa"];
+
+      const recurringContent =
+        "<div style=\"font-size:12px;color:#8891A5;margin-bottom:12px;line-height:1.5\">" +
+          "These auto-post each month on the day you choose. Forecasted amounts appear on the Overview page." +
+        "</div>" +
+        // Summary strip
+        (rec.length > 0
+          ? "<div style=\"" + cardStyle() + "background:#1E2A3A;border:1px solid #2d3d50;margin-bottom:12px\">" +
+              "<div style=\"font-size:9px;letter-spacing:2px;color:#94A3B8;text-transform:uppercase;margin-bottom:4px\">Total Monthly Recurring</div>" +
+              "<div style=\"font-size:26px;font-weight:700;color:#F59E0B;letter-spacing:-0.5px\">" + fmt(totalRec) + "</div>" +
+              "<div style=\"font-size:11px;color:#94A3B8;margin-top:4px\">" + rec.length + " active recurring expenses</div>" +
+            "</div>"
+          : "") +
+        // Recurring items list
+        (rec.length > 0
+          ? rec.map((r, i) => {
+              const c = CATEGORIES.find(x => x.name === r.category) || {icon:"\uD83D\uDCE6", color:"#9CA3AF"};
+              return "<div style=\"" + cardStyle() + "display:flex;align-items:center;gap:12px;padding:12px 14px\">" +
+                "<div style=\"width:36px;height:36px;border-radius:10px;background:" + c.color + "22;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0\">" + c.icon + "</div>" +
+                "<div style=\"flex:1;min-width:0\">" +
+                  "<div style=\"font-size:14px;font-weight:600\">" + r.name + "</div>" +
+                  "<div style=\"font-size:11px;color:#8891A5;margin-top:1px\">" + r.category + " \u00B7 Day " + r.day + " \u00B7 <span style=\"color:#F59E0B;font-weight:600\">" + fmt(r.amount) + "/mo</span></div>" +
+                "</div>" +
+                "<button data-del-recurring=\"" + i + "\" style=\"width:28px;height:28px;background:#FEE2E2;border:none;border-radius:8px;color:#EF4444;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0\">\u00D7</button>" +
+              "</div>";
+            }).join("")
+          : emptyState("\uD83D\uDD04", "No recurring expenses yet", "Add bills and subscriptions below")) +
+        // Add new recurring form
+        "<div style=\"" + cardStyle() + "margin-top:4px\">" +
+          "<div style=\"font-size:11px;letter-spacing:1.5px;color:#8891A5;text-transform:uppercase;margin-bottom:12px\">Add New Recurring</div>" +
+          "<div style=\"display:flex;flex-direction:column;gap:10px\">" +
+            "<input id=\"rec-name\" placeholder=\"Name (e.g. Netflix, Rent)\" style=\"" + inputStyle() + "\" />" +
+            "<input id=\"rec-amt\" type=\"number\" placeholder=\"Amount\" style=\"" + inputStyle() + "\" />" +
+            "<select id=\"rec-cat\" style=\"" + inputStyle() + "appearance:none\">" +
+              CATEGORIES.map(c => "<option value=\"" + c.name + "\">" + c.icon + " " + c.name + "</option>").join("") +
+            "</select>" +
+            "<div>" +
+              "<div style=\"font-size:13px;color:#8891A5;margin-bottom:8px\">Day of month: <span id=\"rec-day-label\" style=\"color:#5B6EF5;font-weight:600\">Not selected</span></div>" +
+              "<div id=\"rec-calendar\" style=\"background:#F5F6FA;border:1px solid #DDE0EA;border-radius:12px;padding:12px;\">" +
+                "<div style=\"display:flex;align-items:center;justify-content:space-between;margin-bottom:10px\">" +
+                  "<button id=\"cal-prev-month\" style=\"background:#E8EAF0;border:none;border-radius:8px;padding:4px 10px;cursor:pointer;font-size:14px;color:#1A1D2E\">\u2039</button>" +
+                  "<span id=\"cal-header\" style=\"font-size:13px;font-weight:600;color:#1A1D2E\"></span>" +
+                  "<button id=\"cal-next-month\" style=\"background:#E8EAF0;border:none;border-radius:8px;padding:4px 10px;cursor:pointer;font-size:14px;color:#1A1D2E\">\u203A</button>" +
+                "</div>" +
+                "<div style=\"display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;margin-bottom:6px\">" +
+                  CAL_DAYS.map(d => "<div style=\"font-size:9px;color:#8891A5;font-weight:600;padding:3px 0\">" + d + "</div>").join("") +
+                "</div>" +
+                "<div id=\"cal-days\" style=\"display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center\"></div>" +
+              "</div>" +
+              "<input type=\"hidden\" id=\"rec-day\" value=\"\" />" +
+            "</div>" +
+            "<button id=\"add-recurring-btn\" style=\"" + btnStyle() + "\">Add Recurring Expense</button>" +
+          "</div>" +
+        "</div>";
+
+      return "<div style=\"padding:16px 20px 0\">" +
+        // Sub-tab pill toggle
+        "<div style=\"display:flex;background:#F5F6FA;border-radius:12px;padding:4px;margin-bottom:16px;border:1px solid #E8EAF0\">" +
+          "<button data-subtab=\"budgets\" style=\"" + pillStyle("budgets") + "\">\uD83C\uDFAF Budgets</button>" +
+          "<button data-subtab=\"recurring\" style=\"" + pillStyle("recurring") + "\">\uD83D\uDD04 Recurring</button>" +
+        "</div>" +
+        (subTab === "budgets" ? budgetContent : recurringContent) +
+      "</div>";
     }
 
     function bindAddForm() {
@@ -739,12 +939,17 @@
         document.getElementById("add-tx-btn").style.background   = txType==="expense"?"#5B6EF5":"#10B981";
         document.getElementById("add-tx-btn").textContent        = `Add ${txType==="expense"?"Expense":"Income"}`;
       };
-      document.getElementById("type-expense").onclick = () => { txType="expense"; updateTypeUI(); };
-      document.getElementById("type-income").onclick  = () => { txType="income";  updateTypeUI(); };
+      const toggleTypeUI = () => {
+        const isIncome = txType === "income";
+        document.getElementById("cat-row").style.display    = isIncome ? "none" : "block";
+        document.getElementById("income-note").style.display = isIncome ? "block" : "none";
+      };
+      document.getElementById("type-expense").onclick = () => { txType="expense"; updateTypeUI(); toggleTypeUI(); };
+      document.getElementById("type-income").onclick  = () => { txType="income";  updateTypeUI(); toggleTypeUI(); };
       document.getElementById("add-tx-btn").onclick = async () => {
         const desc = document.getElementById("tx-desc").value.trim();
         const amt  = document.getElementById("tx-amt").value;
-        const cat  = document.getElementById("tx-cat").value;
+        const cat  = txType==="expense" ? document.getElementById("tx-cat").value : "Income";
         if (!desc || !amt || isNaN(parseFloat(amt))) { showToast("Please fill all fields","error"); return; }
         const btn = document.getElementById("add-tx-btn");
         btn.textContent="Saving…"; btn.disabled=true;
@@ -757,12 +962,39 @@
     }
 
     function bindDeleteButtons() {
+      const modal    = document.getElementById("delete-modal");
+      const descEl   = document.getElementById("delete-modal-desc");
+      const cancelBtn  = document.getElementById("delete-cancel-btn");
+      const confirmBtn = document.getElementById("delete-confirm-btn");
+      let pendingId = null;
+
+      const closeModal = () => { modal.style.display="none"; pendingId=null; };
+      if (cancelBtn)  cancelBtn.onclick  = closeModal;
+      if (modal)      modal.onclick = (e) => { if(e.target===modal) closeModal(); };
+      if (confirmBtn) confirmBtn.onclick = async () => {
+        if (pendingId) {
+          confirmBtn.textContent="Deleting…"; confirmBtn.disabled=true;
+          await deleteTransaction(pendingId);
+          closeModal();
+        }
+      };
+
       document.querySelectorAll("[data-del]").forEach(btn => {
-        btn.onclick = () => deleteTransaction(btn.dataset.del);
+        btn.onclick = () => {
+          pendingId = btn.dataset.del;
+          const desc = btn.dataset.delDesc || "this transaction";
+          const amt  = btn.dataset.delAmt  || "";
+          if (descEl) descEl.innerHTML = `Are you sure you want to delete <strong>${desc}</strong>${amt?" ("+amt+")":""}? This cannot be undone.`;
+          if (modal) modal.style.display = "flex";
+        };
       });
     }
 
     function bindBudgetForm(income) {
+      // Sub-tab switching
+      document.querySelectorAll("[data-subtab]").forEach(btn => {
+        btn.onclick = () => { state.budgetSubTab = btn.dataset.subtab; render(); };
+      });
       let incomeOpen = false;
       document.getElementById("edit-income-btn").onclick = () => {
         incomeOpen = !incomeOpen;
@@ -771,12 +1003,12 @@
       };
       document.getElementById("save-income-btn").onclick = async () => {
         const val = parseFloat(document.getElementById("income-input").value)||0;
-        state.income = val;
-        await saveBaseIncome(val);
-        showToast("Income saved!");
+        await saveMonthBudget("__income__", val);
+        showToast("Income saved & carries forward!");
         incomeOpen=false;
         document.getElementById("income-form").style.display="none";
-        document.getElementById("edit-income-btn").textContent="Edit";
+        document.getElementById("edit-income-btn").textContent="Set";
+        render();
       };
       document.querySelectorAll(".edit-cat-btn").forEach(btn => {
         btn.onclick = () => {
@@ -962,7 +1194,8 @@
       const avg = n>0 ? ytdTotal/n : 0;
 
       // Budget vs Expenses dual-line data
-      const monthlyBudgetTotal = Object.values(state.budgets).reduce((s,v)=>s+v,0);
+      // Use effective budgets for current graph year/month so BvE matches Overview
+      const monthlyBudgetTotal = Object.values(getEffectiveBudgets()).reduce((s,v)=>s+v,0);
       // Build full year BvE data — use allTransactions so all months are included
       const bveAllData = SHORT.map((m,i) => {
         const monthExp = allTransactions
@@ -1118,6 +1351,140 @@
       if (lineBtn) lineBtn.onclick = () => { state.graphType="line"; state.selectedCatMonth=null; render(); };
       window.setCatMonth = (i) => { state.selectedCatMonth = state.selectedCatMonth===i ? null : i; render(); };
       window.setBveMonth = (i) => { state.selectedBveMonth = state.selectedBveMonth===i ? null : i; render(); };
+    }
+
+    // ── Recurring tab ─────────────────────────────────────────
+    function renderRecurring() {
+      const recurring = state.recurring || [];
+      const catOptions = CATEGORIES.map(c=>`<option value="${c.name}">${c.icon} ${c.name}</option>`).join("");
+      const rows = recurring.length ? recurring.map((r,i)=>`
+        <div style="${cardStyle()}display:flex;align-items:center;gap:12px;padding:12px 14px">
+          <div style="width:36px;height:36px;border-radius:10px;background:${(CATEGORIES.find(c=>c.name===r.category)||{color:"#999"}).color}22;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">
+            ${(CATEGORIES.find(c=>c.name===r.category)||{icon:"📦"}).icon}
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:600">${r.name}</div>
+            <div style="font-size:11px;color:#8891A5;margin-top:1px">${r.category} · Day ${r.day} · ${fmt(r.amount)}/mo</div>
+          </div>
+          <button data-del-recurring="${i}" style="background:none;border:none;color:#EF4444;cursor:pointer;font-size:18px;padding:0 0 0 8px;flex-shrink:0">×</button>
+        </div>`).join("") :
+        emptyState("🔄","No recurring expenses set","Add bills, subscriptions or regular payments");
+
+      return `<div style="padding:16px 20px 0">
+        ${sectionTitle("Recurring Expenses")}
+        <div style="font-size:12px;color:#8891A5;margin-bottom:12px;line-height:1.5">
+          Set recurring expenses and they will auto-post each month on the day you choose. Forecasted amounts appear on the Overview page.
+        </div>
+        <!-- Add new recurring -->
+        <div style="${cardStyle()}margin-bottom:14px">
+          <div style="font-size:11px;letter-spacing:1.5px;color:#8891A5;text-transform:uppercase;margin-bottom:12px">Add New Recurring</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <input id="rec-name" placeholder="Name (e.g. Netflix, Rent)" style="${inputStyle()}" />
+            <input id="rec-amt" type="number" placeholder="Amount" style="${inputStyle()}" />
+            <select id="rec-cat" style="${inputStyle()}appearance:none">${catOptions}</select>
+            <div>
+              <div style="font-size:13px;color:#8891A5;margin-bottom:8px">Day of month: <span id="rec-day-label" style="color:#5B6EF5;font-weight:600">Not selected</span></div>
+              <div id="rec-calendar" style="background:#F5F6FA;border:1px solid #DDE0EA;border-radius:12px;padding:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                  <button id="cal-prev-month" style="background:#E8EAF0;border:none;border-radius:8px;padding:4px 10px;cursor:pointer;font-size:14px;color:#1A1D2E">‹</button>
+                  <span id="cal-header" style="font-size:13px;font-weight:600;color:#1A1D2E"></span>
+                  <button id="cal-next-month" style="background:#E8EAF0;border:none;border-radius:8px;padding:4px 10px;cursor:pointer;font-size:14px;color:#1A1D2E">›</button>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;margin-bottom:6px">
+                  ${["Su","Mo","Tu","We","Th","Fr","Sa"].map(d=>`<div style="font-size:9px;color:#8891A5;font-weight:600;padding:3px 0">${d}</div>`).join("")}
+                </div>
+                <div id="cal-days" style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center"></div>
+              </div>
+              <input type="hidden" id="rec-day" value="" />
+            </div>
+            <button id="add-recurring-btn" style="${btnStyle()}">Add Recurring Expense</button>
+          </div>
+        </div>
+        ${rows}
+      </div>`;
+    }
+
+    function bindRecurring() {
+      // ── Mini calendar state ──
+      const now = new Date();
+      let calYear  = now.getFullYear();
+      let calMonth = now.getMonth();
+      const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+      function renderCalendar() {
+        const header  = document.getElementById("cal-header");
+        const daysEl  = document.getElementById("cal-days");
+        const selDay  = parseInt(document.getElementById("rec-day").value) || 0;
+        if (!header || !daysEl) return;
+        header.textContent = `${MONTH_NAMES[calMonth]} ${calYear}`;
+        const firstDay = new Date(calYear, calMonth, 1).getDay();
+        const daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
+        let html = "";
+        // Empty cells before first day
+        for (let i=0; i<firstDay; i++) html += `<div></div>`;
+        // Day cells
+        for (let d=1; d<=daysInMonth; d++) {
+          const isSelected = d === selDay;
+          const isToday = d === now.getDate() && calMonth === now.getMonth() && calYear === now.getFullYear();
+          html += `<div data-cal-day="${d}" style="
+            padding:5px 2px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:${isSelected?"700":"400"};
+            background:${isSelected?"#5B6EF5":isToday?"#EEF2FF":"transparent"};
+            color:${isSelected?"#fff":isToday?"#5B6EF5":"#1A1D2E"};
+            border:${isSelected?"none":isToday?"1px solid #C7D2FE":"1px solid transparent"};
+            transition:all .15s;
+          ">${d}</div>`;
+        }
+        daysEl.innerHTML = html;
+        // Bind day clicks
+        daysEl.querySelectorAll("[data-cal-day]").forEach(el => {
+          el.onmouseenter = () => { if (el.style.background !== "rgb(91, 110, 245)") el.style.background="#E8EAF0"; };
+          el.onmouseleave = () => { if (el.style.background !== "rgb(91, 110, 245)") el.style.background="transparent"; };
+          el.onclick = () => {
+            const day = parseInt(el.dataset.calDay);
+            document.getElementById("rec-day").value = day;
+            const label = document.getElementById("rec-day-label");
+            if (label) label.textContent = `${MONTH_NAMES[calMonth]} ${day}`;
+            renderCalendar();
+          };
+        });
+      }
+
+      // Prev/next month buttons
+      const prevBtn = document.getElementById("cal-prev-month");
+      const nextBtn = document.getElementById("cal-next-month");
+      if (prevBtn) prevBtn.onclick = () => { if(calMonth===0){calMonth=11;calYear--;}else calMonth--; renderCalendar(); };
+      if (nextBtn) nextBtn.onclick = () => { if(calMonth===11){calMonth=0;calYear++;}else calMonth++; renderCalendar(); };
+
+      // Initial render
+      renderCalendar();
+
+      // ── Add button ──
+      document.getElementById("add-recurring-btn").onclick = async () => {
+        const name = document.getElementById("rec-name").value.trim();
+        const amt  = document.getElementById("rec-amt").value;
+        const cat  = document.getElementById("rec-cat").value;
+        const day  = parseInt(document.getElementById("rec-day").value) || 0;
+        if (!name || !amt || isNaN(parseFloat(amt))) { showToast("Please fill all fields","error"); return; }
+        if (!day) { showToast("Please select a day on the calendar","error"); return; }
+        const newItem = { id: Date.now().toString(), name, amount: parseFloat(amt), category: cat, day, active: true };
+        const updated = [...(state.recurring||[]), newItem];
+        await saveRecurring(updated);
+        showToast("Recurring expense added!");
+        document.getElementById("rec-name").value="";
+        document.getElementById("rec-amt").value="";
+        document.getElementById("rec-day").value="";
+        render();
+      };
+
+      document.querySelectorAll("[data-del-recurring]").forEach(btn => {
+        btn.onclick = async () => {
+          const idx = parseInt(btn.dataset.delRecurring);
+          const updated = state.recurring.filter((_,i)=>i!==idx);
+          await saveRecurring(updated);
+          showToast("Recurring expense removed");
+          render();
+        };
+      });
     }
 
     // ── Style helpers ─────────────────────────
