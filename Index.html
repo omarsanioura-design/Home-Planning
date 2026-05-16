@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <title>HomeWise · Household Budget</title>
-  <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#F5F6FA" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
 
@@ -89,10 +88,23 @@
     const catColor = name => (CATEGORIES.find(c=>c.name===name)||{color:"#999"}).color;
     const catIcon  = name => (CATEGORIES.find(c=>c.name===name)||{icon:"💰"}).icon;
 
+    let _toastTimer = null;
     function showToast(msg, type="success") {
-      state.toast = { msg, type };
-      render();
-      setTimeout(()=>{ state.toast=null; render(); }, 3000);
+      if (_toastTimer) clearTimeout(_toastTimer);
+      let el = document.getElementById("toast-el");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "toast-el";
+        el.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:9999;white-space:nowrap;box-shadow:0 4px 20px #00000040;transition:opacity .3s;font-family:'DM Sans',sans-serif;";
+        document.body.appendChild(el);
+      }
+      el.textContent = msg;
+      el.style.background = type === "error" ? "#EF4444" : "#10B981";
+      el.style.opacity = "1";
+      _toastTimer = setTimeout(() => {
+        el.style.opacity = "0";
+        _toastTimer = setTimeout(() => { el.remove(); _toastTimer = null; }, 300);
+      }, 3000);
     }
 
     // ── Firestore helpers ─────────────────────
@@ -183,11 +195,15 @@
     async function saveMonthBudget(category, value) {
       const { month, year } = state;
       const key = `budget_${year}_${month}`;
-      // Store as month-specific override
       const overrides = state.budgetOverrides || {};
       overrides[key] = { ...(overrides[key] || {}), [category]: value };
       state.budgetOverrides = overrides;
-      await setDoc(doc(db, settingsPath()), { budgetOverrides: overrides }, {merge:true});
+      try {
+        await setDoc(doc(db, settingsPath()), { budgetOverrides: overrides }, {merge:true});
+      } catch(e) {
+        showToast("Save failed: " + e.message, "error");
+        console.error("saveMonthBudget error:", e);
+      }
     }
 
     async function saveBaseIncome(income) {
@@ -537,12 +553,11 @@
       const { tab, month, year, transactions, income } = state;
       const expenses = transactions.filter(t=>t.type==="expense");
       const totalExp = expenses.reduce((s,t)=>s+t.amount,0);
-      // Use effective income for this month (carry-forward override)
       let effectiveMonthIncome = income;
-      const _overrides = state.budgetOverrides || {};
+      const _ov = state.budgetOverrides || {};
       for (let m=month, y=year, i=0; i<24; i++) {
         const k = `budget_${y}_${m}`;
-        if (_overrides[k] && _overrides[k]["__income__"] !== undefined) { effectiveMonthIncome = _overrides[k]["__income__"]; break; }
+        if (_ov[k] && _ov[k]["_income"] !== undefined) { effectiveMonthIncome = _ov[k]["_income"]; break; }
         if (m===0){m=11;y--;}else m--;
       }
       const totalInc = transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0) + effectiveMonthIncome;
@@ -555,8 +570,6 @@
 
       root.innerHTML = `
         <div id="app" style="font-family:'DM Sans',sans-serif;background:#F5F6FA;min-height:100vh;max-width:430px;margin:0 auto;color:#1A1D2E;padding-bottom:80px">
-
-          ${state.toast ? `<div style="position:fixed;top:16px;left:50%;transform:translateX(-50%);background:${state.toast.type==="error"?"#EF4444":"#10B981"};color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:999;white-space:nowrap;box-shadow:0 4px 20px #00000040">${state.toast.msg}</div>` : ""}
 
           <!-- Header -->
           <div style="background:#FFFFFF;padding:20px 20px 16px;border-bottom:1px solid #E8EAF0;box-shadow:0 1px 8px #0000000a">
@@ -576,16 +589,26 @@
           </div>
 
           <!-- Tab Content -->
-          ${tab==="dashboard"  ? renderDashboard(expenses, spentByCat, budgets) : ""}
+          ${tab==="dashboard"  ? renderDashboard(expenses, spentByCat, budgets, effectiveMonthIncome) : ""}
           ${tab==="add"        ? renderAdd() : ""}
           ${tab==="transactions"? renderTransactions(transactions) : ""}
           ${tab==="budget"     ? renderBudget(income) : ""}
           ${tab==="graphs"     ? renderGraphs(state.allTransactions || state.transactions, state.graphCat, state.graphType, state.year) : ""}
 
           <!-- Nav -->
-          <nav style="position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#FFFFFF;border-top:1px solid #E8EAF0;display:flex;z-index:100;box-shadow:0 -2px 12px #0000000a">
-            ${[["dashboard","📊","Overview"],["add","➕","Add"],["transactions","🧾","History"],["graphs","📈","Graphs"],["budget","🎯","Budgets"]]
-              .map(([id,ic,lb])=>`<button data-tab="${id}" style="flex:1;padding:12px 0 8px;border:none;background:transparent;color:${tab===id?"#5B6EF5":'#8891A5'};cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:9px;letter-spacing:.5px;font-family:inherit;transition:color .2s"><span style="font-size:20px">${ic}</span>${lb}</button>`).join("")}
+          <nav style="position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#FFFFFF;border-top:1px solid #E8EAF0;display:flex;z-index:100;box-shadow:0 -4px 20px #0000000f;padding-bottom:env(safe-area-inset-bottom)">
+            ${[
+              ["dashboard","Overview",`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="13" width="4" height="8" rx="1"/><rect x="10" y="9" width="4" height="12" rx="1"/><rect x="17" y="5" width="4" height="16" rx="1"/></svg>`],
+              ["add","Add",`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>`],
+              ["transactions","History",`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>`],
+              ["graphs","Graphs",`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`],
+              ["budget","Budgets",`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>`]
+            ].map(([id,lb,svg])=>`
+              <button data-tab="${id}" style="flex:1;padding:10px 0 10px;border:none;background:transparent;color:${tab===id?"#5B6EF5":"#9BA3B8"};cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;font-family:inherit;position:relative;transition:color .2s">
+                ${tab===id?`<span style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:28px;height:3px;background:#5B6EF5;border-radius:0 0 4px 4px"></span>`:""}
+                <span style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;background:${tab===id?"#EEF0FD":"transparent"};transition:background .2s">${svg}</span>
+                <span style="font-size:10px;font-weight:${tab===id?"600":"500"};letter-spacing:.3px">${lb}</span>
+              </button>`).join("")}
           </nav>
         </div>`;
 
@@ -596,10 +619,14 @@
       if (document.getElementById("prev-month")) {
         document.getElementById("prev-month").onclick = () => {
           if (state.month===0){state.month=11;state.year--;} else state.month--;
+          const {month,year} = state;
+          state.transactions = (state.allTransactions||[]).filter(t=>t.month===month&&t.year===year);
           subscribeToHousehold(); render();
         };
         document.getElementById("next-month").onclick = () => {
           if (state.month===11){state.month=0;state.year++;} else state.month++;
+          const {month,year} = state;
+          state.transactions = (state.allTransactions||[]).filter(t=>t.month===month&&t.year===year);
           subscribeToHousehold(); render();
         };
       }
@@ -638,15 +665,74 @@
 
       // Add tx form
       if (tab==="add") bindAddForm();
-      if (tab==="budget") bindBudgetForm(income);
       if (tab==="transactions") bindDeleteButtons();
       if (tab==="graphs") bindGraphs();
-      if (tab==="budget")    { bindBudgetForm(income); bindRecurring(); }
+      if (tab==="budget") { bindBudgetForm(income); bindRecurring(); }
+      if (tab==="dashboard") {
+        document.querySelectorAll("[data-cat-popup]").forEach(el => {
+          el.onclick = () => showCategoryPopup(el.dataset.catPopup);
+        });
+      }
     }
 
-    function renderDashboard(expenses, spentByCat, budgets) {
+    function showCategoryPopup(catName) {
+      const cat = CATEGORIES.find(c => c.name === catName) || { name: catName, icon: "📦", color: "#B0B0B0" };
+      const { month, year } = state;
+      const txs = (state.allTransactions || [])
+        .filter(t => t.type === "expense" && t.category === catName && t.month === month && t.year === year)
+        .sort((a, b) => (a.createdAt?.seconds||0) - (b.createdAt?.seconds||0));
+      const total = txs.reduce((s, t) => s + t.amount, 0);
+
+      const existing = document.getElementById("cat-popup-overlay");
+      if (existing) existing.remove();
+
+      const overlay = document.createElement("div");
+      overlay.id = "cat-popup-overlay";
+      overlay.style.cssText = "position:fixed;inset:0;background:#00000060;z-index:1000;display:flex;align-items:center;justify-content:center;font-family:'DM Sans',sans-serif;padding:24px;";
+
+      const rowHTML = txs.map(t => {
+        const d = t.createdAt ? new Date(t.createdAt) : null;
+        const day = d ? d.getDate() : "—";
+        const mon = d ? SHORT[d.getMonth()] : SHORT[t.month];
+        return `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-bottom:1px solid #F5F6FA">
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="min-width:36px;text-align:center">
+                <div style="font-size:13px;font-weight:700;color:#1A1D2E">${day}</div>
+                <div style="font-size:10px;color:#8891A5;text-transform:uppercase;letter-spacing:.5px">${mon}</div>
+              </div>
+              <div style="width:1px;height:28px;background:#E8EAF0"></div>
+              <div style="font-size:14px;font-weight:500;color:#1A1D2E">${t.description}</div>
+            </div>
+            <div style="font-size:14px;font-weight:600;color:#EF4444;flex-shrink:0;margin-left:12px">−${fmt(t.amount)}</div>
+          </div>`;
+      }).join("");
+
+      overlay.innerHTML = `
+        <div style="background:#fff;border-radius:20px;width:100%;max-width:420px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 40px #00000030">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;border-bottom:1px solid #F5F6FA;flex-shrink:0">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="width:40px;height:40px;border-radius:12px;background:${cat.color}22;display:flex;align-items:center;justify-content:center;font-size:20px">${cat.icon}</div>
+              <div>
+                <div style="font-size:16px;font-weight:700;color:#1A1D2E">${cat.name} — ${SHORT[month]} ${year}</div>
+                <div style="font-size:12px;color:#8891A5">${txs.length} transaction${txs.length!==1?"s":""} · ${fmt(total)} total</div>
+              </div>
+            </div>
+            <button id="cat-popup-close" style="width:32px;height:32px;border-radius:50%;border:none;background:#F5F6FA;color:#1A1D2E;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">×</button>
+          </div>
+          <div style="overflow-y:auto;flex:1">
+            ${txs.length ? rowHTML : `<div style="padding:40px 20px;text-align:center;color:#8891A5;font-size:14px">No transactions for this category in ${MONTHS[month]}</div>`}
+          </div>
+        </div>`;
+
+      document.body.appendChild(overlay);
+      overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+      document.getElementById("cat-popup-close").onclick = () => overlay.remove();
+    }
+
+    function renderDashboard(expenses, spentByCat, budgets, effectiveIncome) {
       const totalExp    = expenses.reduce((s,t)=>s+t.amount,0);
-      const totalInc    = state.transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0) + state.income;
+      const totalInc    = state.transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0) + effectiveIncome;
       const balance     = totalInc - totalExp;
       const totalBudget = Object.values(budgets).reduce((s,v)=>s+v,0);
       const budgetVsAct = totalBudget - totalExp;
@@ -690,10 +776,10 @@
         if (spent===0 && budget===0) return "";
         const pct = budget>0 ? Math.min((spent/budget)*100,100) : 0;
         const over = spent>budget && budget>0;
-        const forecast = forecastForCategory(cat.name, month, year);
+        const forecast = forecastForCategory(cat.name, state.month, state.year);
         const forecastRemaining = Math.max(forecast - spent, 0);
         return `
-          <div style="${cardStyle()}">
+          <div data-cat-popup="${cat.name}" style="${cardStyle()}cursor:pointer;">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:${budget>0||forecast>0?10:0}px">
               <div style="display:flex;align-items:center;gap:10px">
                 <div style="width:38px;height:38px;border-radius:12px;background:${cat.color}22;display:flex;align-items:center;justify-content:center;font-size:18px">${cat.icon}</div>
@@ -736,7 +822,7 @@
               </select>
             </div>
             <div id="income-note" style="display:none;background:#DCFCE7;border:1px solid #86EFAC;border-radius:10px;padding:10px 14px;font-size:12px;color:#166534;line-height:1.5">
-              💰 Income will be added to your <strong>monthly income total</strong> for ${SHORT[month]} ${year}.
+              💰 Income will be added to your <strong>monthly income total</strong> for ${SHORT[state.month]} ${state.year}.
             </div>
             <button id="add-tx-btn" style="${btnStyle()}">Add Expense</button>
           </div>
@@ -791,11 +877,10 @@
       const subTab = state.budgetSubTab || "budgets";
       const SHORT_M = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-      // Effective income carry-forward
       let effectiveIncome = income;
       for (let m=month, y=year, i=0; i<24; i++) {
         const k = "budget_" + y + "_" + m;
-        if (overrides[k] && overrides[k]["__income__"] !== undefined) { effectiveIncome = overrides[k]["__income__"]; break; }
+        if (overrides[k] && overrides[k]["_income"] !== undefined) { effectiveIncome = overrides[k]["_income"]; break; }
         if (m===0){m=11;y--;}else m--;
       }
 
@@ -817,8 +902,8 @@
               "<div style=\"font-weight:600;font-size:14px\">\uD83D\uDCB0 Base Monthly Income</div>" +
               "<div style=\"display:flex;align-items:center;gap:6px;margin-top:2px\">" +
                 "<span style=\"color:#10B981;font-size:13px;font-weight:600\">" + fmt(effectiveIncome) + "</span>" +
-                (overrides[monthKey] && overrides[monthKey]["__income__"] !== undefined
-                  ? "<span style=\"font-size:10px;color:#5B6EF5;margin-left:6px;background:#EEF2FF;padding:1px 6px;border-radius:8px;border:1px solid #C7D2FE\">\u25CF this month</span>"
+                (overrides[monthKey] && overrides[monthKey]["_income"] !== undefined
+                  ? "<span style=\"font-size:10px;color:#5B6EF5;margin-left:6px;background:#EEF2FF;padding:1px 6px;border-radius:8px;border:1px solid #C7D2FE\">● this month</span>"
                   : "<span style=\"font-size:10px;color:#8891A5;margin-left:6px\">carried fwd</span>") +
               "</div>" +
             "</div>" +
@@ -996,18 +1081,18 @@
         btn.onclick = () => { state.budgetSubTab = btn.dataset.subtab; render(); };
       });
       let incomeOpen = false;
-      document.getElementById("edit-income-btn").onclick = () => {
+      const editIncomeBtn = document.getElementById("edit-income-btn");
+      if (editIncomeBtn) editIncomeBtn.onclick = () => {
         incomeOpen = !incomeOpen;
         document.getElementById("income-form").style.display = incomeOpen?"block":"none";
-        document.getElementById("edit-income-btn").textContent = incomeOpen?"Cancel":"Edit";
+        editIncomeBtn.textContent = incomeOpen?"Cancel":"Set";
       };
-      document.getElementById("save-income-btn").onclick = async () => {
+      const saveIncomeBtn = document.getElementById("save-income-btn");
+      if (saveIncomeBtn) saveIncomeBtn.onclick = async () => {
         const val = parseFloat(document.getElementById("income-input").value)||0;
-        await saveMonthBudget("__income__", val);
+        await saveMonthBudget("_income", val);
         showToast("Income saved & carries forward!");
-        incomeOpen=false;
-        document.getElementById("income-form").style.display="none";
-        document.getElementById("edit-income-btn").textContent="Set";
+        incomeOpen = false;
         render();
       };
       document.querySelectorAll(".edit-cat-btn").forEach(btn => {
